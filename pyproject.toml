@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fearless-rehearsal"
+version = "0.1.0"
+description = "Series draft rehearsal for competitive League of Legends coaches"
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
+
+[project.optional-dependencies]
+data = ["zstandard>=0.23,<1", "orjson>=3.10,<4", "duckdb>=1.2,<3", "pyarrow>=19"]
+model = ["numpy>=1.26,<3", "catboost>=1.2.8,<2", "scikit-learn>=1.6,<2", "threadpoolctl>=3"]
+test = ["pytest>=8,<10", "httpx>=0.27,<1"]
+
+[tool.setuptools.packages.find]
+include = ["fearless*"]
+
+[tool.setuptools.package-data]
+fearless = ["assets/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

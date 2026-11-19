@@ -1,0 +1,32 @@
+# BEGIN factory-managed local files (do not edit)
+/.factory/
+/.codex/config.toml
+/.local/
+# END factory-managed local files
+
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg-info/
+node_modules/
+dist/
+web/test-results/
+web/playwright-report/
+*.tsbuildinfo
+.DS_Store
+*.sqlite*
+*.db
+.env
+/grid/
+/private-data/
+/artifacts/
+/storages/
+/logs/
+*.jsonl.zst
+catboost_info/
+/.worktrees/
+/.agents/
+/.idea/workspace.xml
+/.idea/shelf/
+/.idea/dataSources*
