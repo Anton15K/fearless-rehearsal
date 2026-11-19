@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 from fearless.model import DraftForecaster
-from fearless.model_features import ChampionCatalog
+from fearless.model_features import ChampionCatalog, History
 from fearless.pair_model import PairChallenger, PairHistory, _beam, _episodes, _fit, _role_assignments, pair_turns, whole_series
 from fearless.rules import schedule
 
@@ -103,3 +103,54 @@ def test_fitter_learns_a_pair_feature_only_from_represented_targets():
     assert fitted == 1
     assert weights[1] > 0
     assert all(weight == 0 for index, weight in enumerate(weights) if index != 1)
+
+
+def test_pair_evidence_uses_display_aliases_feasible_flex_roles_and_pregame_history():
+    order = schedule("one", "two")
+    current = [{"team": team, "kind": kind, "champion": f"Used {index}"}
+               for index, (team, kind) in enumerate(order[:9])]
+    current[6]["champion"] = "Ally Mid"
+    catalog = ChampionCatalog({name: "" for name in ("Ally Mid", "Karma", "Wukong", "Unknown")})
+    history = History(catalog)
+    history.role_counts[catalog.indices["Ally Mid"]] = [0, 0, 7, 0, 0]
+    history.role_counts[catalog.indices["Wukong"]] = [6, 6, 0, 0, 0]
+    history.role_counts[catalog.indices["Karma"]] = [0, 0, 6, 0, 6]
+
+    pair_actions = [*current, {"team": "one", "kind": "pick", "champion": "Wukong"},
+                    {"team": "one", "kind": "pick", "champion": "Karma"}]
+    earlier = {"date": "2026-04-01", "eligible": True, "actions": pair_actions,
+               "rosters": {"one": [{"player": "active-player", "champion": "Wukong"},
+                                   {"player": "substitute", "champion": "Karma"}]}}
+
+    class Forecaster:
+        def __init__(self):
+            self.catalog = catalog
+            self.games = [earlier, {**earlier, "date": "2026-04-02"}, {**earlier, "date": "2026-04-03"}]
+
+        def _history(self, day):
+            assert day == "2026-04-02"
+            return history
+
+        def forecast(self, *, current, **_context):
+            rows = {
+                None: [("MonkeyKing", .7), ("Karma", .2)],
+                "MonkeyKing": [("Karma", .8), ("Unknown", .1)],
+                "Karma": [("MonkeyKing", .5), ("Unknown", .2)],
+            }
+            last = current[-1]["champion"] if len(current) > 9 else None
+            return {"choices": [{"champion": name, "probability": probability} for name, probability in rows[last]]}
+
+    model = PairChallenger({"version": 1, "beam_width": 8, "train_through": "2025-12-31",
+                            "weights": [0.1, 0.1, 0.1, 0.1]})
+    ranked = model.rank_pairs(forecaster=Forecaster(), date="2026-04-02", patch="16.7", region="NA", first="one",
+                              second="two", game_number=1, current=current, pool=["Karma", "MonkeyKing", "Unknown"],
+                              rosters={"one": ["active-player"]})
+
+    assert [row["champions"] for row in ranked] == [["Karma", "MonkeyKing"], ["MonkeyKing", "Unknown"], ["Karma", "Unknown"]]
+    role, team, players = ranked[0]["evidence"]
+    assert "Karma support" in role and "MonkeyKing top" in role and "MonkeyKing jungle" in role
+    assert "Karma mid" not in role and "Wukong" not in role
+    assert "1 earlier draft" in team and "2026-04-01" in team
+    assert "1 player–champion observation" in players and "2026-04-01" in players
+    assert all("Unknown" not in line for row in ranked[1:] for line in row["evidence"])
+    assert all(set(row) == {"champions", "evidence"} for row in ranked)

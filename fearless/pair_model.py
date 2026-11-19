@@ -14,7 +14,7 @@ from threading import Lock
 import numpy as np
 
 from fearless.model import DraftForecaster, _method_scores, _softmax
-from fearless.model_features import DraftContext, History, TEST_START, TRAIN_START, evidence_date, prepare_games
+from fearless.model_features import DraftContext, History, ROLES, TEST_START, TRAIN_START, evidence_date, prepare_games
 from fearless.rules import DRAFT_LENGTH, legal_champions, schedule
 
 
@@ -23,6 +23,7 @@ VALIDATION_FROM = "2026-01-01"
 VALIDATION_THROUGH = "2026-03-27"
 FEATURES = ("global_pair", "team_pair", "player_pair", "role_conflict")
 ALL_ROLES = (1 << 5) - 1
+ROLE_BITS = tuple(1 << index for index in range(len(ROLES)))
 BEAM_WIDTH = 8
 SIDECAR = "challenger.json"
 
@@ -65,45 +66,107 @@ class PairHistory:
         return (
             bisect_left(self.global_pairs.get(pair, ()), day),
             bisect_left(self.team_pairs.get((team, pair), ()), day),
-            sum(bisect_left(self.player_pairs.get((str(player), champion, pair), ()), day)
-                for player in set(players) for champion in pair),
+            sum(bisect_left(dates, day) for dates in self._player_dates(pair, players)),
         )
+
+    def _player_dates(self, pair, players):
+        return (self.player_pairs.get((str(player), champion, pair), ())
+                for player in set(players) for champion in pair)
+
+    def dated_evidence(self, pair, team, players, day):
+        team_dates = self.team_pairs.get((team, pair), ())
+        team_count = bisect_left(team_dates, day)
+        latest_team = team_dates[team_count - 1] if team_count else None
+        player_count, latest_player = 0, None
+        for dates in self._player_dates(pair, players):
+            count = bisect_left(dates, day)
+            if count:
+                player_count += count
+                latest_player = max(latest_player or "", dates[count - 1])
+        return team_count, latest_team, player_count, latest_player
 
 
 def _role_assignments(masks):
     assignments = {0}
     for mask in masks:
-        assignments = {used | role for used in assignments for role in (1, 2, 4, 8, 16)
+        assignments = {used | role for used in assignments for role in ROLE_BITS
                        if mask & role and not used & role}
     return assignments
 
 
-def _role_mask(history, champion):
+def _role_mask(history, champion, *, unsupported=ALL_ROLES):
     index = history.catalog.indices.get(champion)
     if index is None:
-        return ALL_ROLES
+        return unsupported
     observations = history.role_counts[index]
     total = int(observations.sum())
     if total < 5:
-        return ALL_ROLES
-    return sum(1 << role for role, count in enumerate(observations) if count >= 2 and count / total >= 0.12) or ALL_ROLES
+        return unsupported
+    return sum(bit for bit, count in zip(ROLE_BITS, observations, strict=True)
+               if count >= 2 and count / total >= 0.12) or unsupported
+
+
+def _pair_role_options(occupied, left_mask, right_mask):
+    for used in occupied:
+        for left in ROLE_BITS:
+            if left & left_mask and not used & left:
+                for right in ROLE_BITS:
+                    if right & right_mask and not (used | left) & right:
+                        yield left, right
+
+
+def _ally_picks(current, team):
+    return [action["champion"] for action in current if action["team"] == team and action["kind"] == "pick"]
 
 
 def _pair_features(pairs, *, pair_history, history, current, day, team, rosters):
-    ally = [action["champion"] for action in current if action["team"] == team and action["kind"] == "pick"]
+    ally = _ally_picks(current, team)
     roles = {champion: _role_mask(history, champion) for champion in set(ally).union(*pairs)}
     occupied = _role_assignments([roles[champion] for champion in ally])
     players = history.player_ids(team, rosters)
     features = {}
     for pair in pairs:
         global_count, team_count, player_count = pair_history.counts(pair, team, players, day)
-        feasible = not occupied or any(
-            left & roles[pair[0]] and not used & left
-            and roles[pair[1]] & ~(used | left)
-            for used in occupied for left in (1, 2, 4, 8, 16)
-        )
+        feasible = not occupied or any(_pair_role_options(occupied, roles[pair[0]], roles[pair[1]]))
         features[pair] = (log1p(global_count / 3), log1p(team_count / 2), log1p(player_count / 2), -int(not feasible))
     return features
+
+
+def _role_evidence(display, canonical, history, occupied):
+    observed = [_role_mask(history, champion, unsupported=0) for champion in canonical]
+    if not occupied or not any(observed):
+        return None
+    options = sorted(set(_pair_role_options(occupied, *(mask or ALL_ROLES for mask in observed))))
+    if not options:
+        return "Earlier role observations suggest a position overlap in this draft."
+
+    names = dict(zip(ROLE_BITS, ROLES, strict=True))
+    if not all(observed):
+        known = 0 if observed[0] else 1
+        roles = " or ".join(names[role] for role in sorted({option[known] for option in options}))
+        return f"Plausible positions for {display[known]} from earlier role observations include {roles}."
+
+    def describe(option):
+        return f"{display[0]} {names[option[0]]} with {display[1]} {names[option[1]]}"
+
+    first = options[0]
+    if len(options) == 1:
+        return f"Earlier role observations support {describe(first)}."
+    other = max(options[1:], key=lambda option: sum(a != b for a, b in zip(first, option, strict=True)))
+    return f"Earlier role observations support assignments such as {describe(first)} or {describe(other)}."
+
+
+def _dated_pair_evidence(pair_history, pair, team, players, day, supplied):
+    team_count, latest_team, player_count, latest_player = pair_history.dated_evidence(pair, team, players, day)
+    evidence = []
+    if team_count:
+        noun = "draft" if team_count == 1 else "drafts"
+        evidence.append(f"This team picked the pair in {team_count} earlier {noun}, last observed {latest_team}.")
+    if player_count:
+        lineup = "The supplied lineup" if supplied else "The last observed lineup"
+        noun = "observation" if player_count == 1 else "observations"
+        evidence.append(f"{lineup} has {player_count} player–champion {noun} with this pair, last observed {latest_player}.")
+    return evidence
 
 
 def _beam(forecast, current, team, width, legal):
@@ -187,12 +250,27 @@ class PairChallenger:
             return []
         # Use baseline output labels for display and canonical names for historical evidence.
         canonical = forecaster.catalog.canonical
-        pair_keys = {pair: tuple(sorted(map(canonical, pair))) for pair in mass}
+        canonical_pairs = {pair: tuple(map(canonical, pair)) for pair in mass}
+        pair_keys = {pair: tuple(sorted(champions)) for pair, champions in canonical_pairs.items()}
         normalized = [forecaster.catalog.normalize_action(action) for action in current]
-        historical = _pair_features(pair_keys.values(), pair_history=pair_history, history=forecaster._history(date),
+        history = forecaster._history(date)
+        historical = _pair_features(pair_keys.values(), pair_history=pair_history, history=history,
                                     current=normalized, day=date, team=team, rosters=rosters)
         features = {pair: historical[key] for pair, key in pair_keys.items()}
-        return [{"champions": list(pair)} for pair in _ranking(mass, features, self.artifact["weights"])[:limit]]
+        selected = _ranking(mass, features, self.artifact["weights"])[:limit]
+        occupied = _role_assignments([_role_mask(history, champion) for champion in _ally_picks(normalized, team)])
+        players = history.player_ids(team, rosters)
+        alternatives = []
+        for pair in selected:
+            evidence = _dated_pair_evidence(pair_history, pair_keys[pair], team, players, date, bool(rosters and team in rosters))
+            positions = _role_evidence(pair, canonical_pairs[pair], history, occupied)
+            if positions:
+                evidence.insert(0, positions)
+            row = {"champions": list(pair)}
+            if evidence:
+                row["evidence"] = evidence
+            alternatives.append(row)
+        return alternatives
 
 
 def _episodes(rows, forecaster, width):
