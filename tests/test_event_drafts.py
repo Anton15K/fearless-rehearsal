@@ -150,3 +150,25 @@ def test_transfer_checks_each_past_external_holdout(transfer_tables):
     assert rows == []
     assert "known-previous-draft" in audit["excluded"]["series"]
     assert audit["overlap"]["previous_2"]["matched_source_games"] == 1
+
+
+def test_role_pair_holdout_resolves_nongshim_to_its_earlier_archive_team(tables):
+    stage = "LCK/2026 Season/Season Playoffs"
+    for records in tables.values():
+        for row in records:
+            row["OverviewPage"] = stage
+            for field in ("Team1", "Team2", "Blue", "Red", "FirstPick"):
+                if row.get(field) == "Ground Zero Gaming":
+                    row[field] = "Nongshim RedForce"
+    for row in tables["score"]:
+        row["start"] = row["start"].replace("2026-07-25", "2026-08-29")
+    archive = [{"date": "2026-08-28", "eligible": True, "finished": True,
+                "team_names": {"nongshim": "NONGSHIM RED FORCE"}}]
+    (first, second), report = event_drafts.normalize(
+        tables, archive, [], {"16.14": CHAMPIONS}, cohort=event_drafts.ROLE_PAIRS,
+    )
+
+    assert first["second"] == second["first"] == "nongshim"
+    assert first["team_names"]["nongshim"] == "Nongshim RedForce"
+    assert first["region"] == "KR"
+    assert report["stages"][stage]["first_pick"]["accepted_recorded"] == 2

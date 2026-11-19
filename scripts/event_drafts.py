@@ -72,6 +72,18 @@ TRANSFER_RULES = {
         "https://lol.fandom.com/wiki/LPL/2026_Season/Split_2_Playoffs",
     ],
 }
+ROLE_PAIR_STAGES = {
+    "LCK/2026 Season/Season Play-In": ("LCK 2026 Postseason", "KR"),
+    "LCK/2026 Season/Season Playoffs": ("LCK 2026 Postseason", "KR"),
+    "LCK CL/2026 Season/Season Play-In": ("LCK CL 2026 Postseason", "KR"),
+    "LCK CL/2026 Season/Season Playoffs": ("LCK CL 2026 Postseason", "KR"),
+}
+ROLE_PAIR_RULES = {
+    "KR": [
+        "https://lolesports.com/ko-KR/news/2026-lck-rulebook-update",
+        "https://cmsassets.rgpub.io/sanity/files/dsfx7636/news_live/b5e4819daa2793425433910ca02b1c479b2f15a3.pdf?accountingTag=lol_esports",
+    ],
+}
 
 
 @dataclass(frozen=True)
@@ -91,8 +103,12 @@ TRANSFER = Cohort(
     excluded_stages={EMEA_SUMMER: "Excluded by the first-pick coverage gate. The event has under 50 verifiable "
                                   "games and its archived draft order conflicts with the published blue-first rule."},
 )
-COHORTS = {"round-one": ROUND_ONE, "transfer": TRANSFER}
-TEAM_ALIASES = {name.casefold(): official for name, official in ALIASES.items()}
+ROLE_PAIRS = Cohort(ROLE_PAIR_STAGES, ROLE_PAIR_RULES, "2026-08-24", before="2026-09-16",
+                    previous_holdouts=3, query_limit=300)
+COHORTS = {"round-one": ROUND_ONE, "transfer": TRANSFER, "role-pairs": ROLE_PAIRS}
+TEAM_ALIASES = {name.casefold(): official for name, official in ALIASES.items()} | {
+    "nongshim redforce": "NONGSHIM RED FORCE",
+}
 PATCH_LABEL = re.compile(r"\d+\.\d+")
 PASSED_BANS = ("none", "no ban")
 EXTERNAL = "leaguepedia:"
