@@ -1,6 +1,7 @@
 """Resolve matchup teams and rosters using completed games before a cutoff."""
 
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from fearless.app_forecast import _completed_day
@@ -33,6 +34,7 @@ class TeamDirectory:
     def __init__(self):
         self._names = defaultdict(list)
         self._teams = defaultdict(list)
+        self._players = defaultdict(dict)
 
     def add(self, games: list[dict], *, preferred: bool) -> None:
         for game in games:
@@ -51,6 +53,9 @@ class TeamDirectory:
                     sighting = TeamObservation(str(team), day, game.get("region", ""), preferred, roster)
                     self._names[team_key(name)].append(sighting)
                     self._teams[sighting.id].append(sighting)
+                    for player_name, player_id in roster.items():
+                        first_seen = self._players[player_name.casefold()]
+                        first_seen[player_id] = min(day, first_seen.get(player_id, day))
             except (AttributeError, KeyError, TypeError, ValueError):
                 continue
 
@@ -75,3 +80,18 @@ class TeamDirectory:
             identity.id, latest.day, latest.region, list(roster.roster) if roster else [],
             roster.day if roster else None, player_ids,
         )
+
+
+    def lineup_ids(self, roster: Iterable[str], same_team: dict[str, str], cutoff: str) -> dict[str, str]:
+        players = {name.casefold(): player for name, player in same_team.items()}
+        for name in roster:
+            key = name.casefold()
+            if key in players:
+                continue
+            matches = [
+                player for player, first_seen in self._players.get(key, {}).items()
+                if first_seen < cutoff
+            ]
+            if len(matches) == 1:
+                players[key] = matches[0]
+        return players

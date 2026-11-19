@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fearless.app_directory import TeamDirectory, team_key
 from fearless.app_forecast import HistoricalFrequencies
-from fearless.app_store import RehearsalError
+from fearless.app_error import RehearsalError
 from fearless.rules import DRAFT_LENGTH, DraftAction, schedule, series_locks, validate_action
 
 
@@ -227,6 +227,12 @@ class MatchCatalog:
             raise RehearsalError(422, "Both names refer to the same team in earlier games.")
         regions = [resolved[team].region for team in teams if resolved[team] is not None and resolved[team].region]
         region = regions[0] if regions and len(set(regions)) == 1 else ""
+        overrides = settings.get("rosters") or {}
+        players = {}
+        for team, history in resolved.items():
+            lineup = overrides.get(team, ())
+            names = lineup.values() if isinstance(lineup, dict) else lineup
+            players[team] = self.teams.lineup_ids(names, history.player_ids if history else {}, as_of)
         return Match(
             metadata={
                 "id": PROSPECTIVE_ID, "source": PROSPECTIVE_ID, "title": " vs ".join(teams),
@@ -236,7 +242,7 @@ class MatchCatalog:
                 "roster_dates": {team: history.roster_as_of for team, history in resolved.items() if history},
             },
             region=region, team_ids=ids,
-            player_ids={team: history.player_ids for team, history in resolved.items() if history},
+            player_ids=players,
             previous=[], historical={}, opening=[], coach_team=coach,
         )
 

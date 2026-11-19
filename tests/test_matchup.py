@@ -33,8 +33,20 @@ def app_and_forecaster(tmp_path):
     earlier = {
         "series_id": "one", "game_number": 1, "date": "2026-01-09", "region": "NA",
         "team_names": {"north-id": "Northstar", "other-id": "Other team"},
-        "rosters": {"north-id": [{"player": "existing-player", "player_name": "Known"}]},
+        "rosters": {
+            "north-id": [{"player": "existing-player", "player_name": "Known"}],
+            "other-id": [
+                {"player": "transfer-id", "player_name": "Transfer"},
+                {"player": "duplicate-one", "player_name": "Shared"},
+            ],
+        },
         "actions": [{"team": "north-id", "kind": "ban", "champion": "Vi"}],
+    }
+    older = {
+        "series_id": "older", "game_number": 1, "date": "2026-01-08", "region": "NA",
+        "team_names": {"another-id": "Another team"},
+        "rosters": {"another-id": [{"player": "duplicate-two", "player_name": "Shared"}]},
+        "actions": [],
     }
     same_day = {
         "series_id": "two", "game_number": 1, "date": "2026-01-10", "region": "NA",
@@ -42,7 +54,7 @@ def app_and_forecaster(tmp_path):
         "rosters": {"north-id": [{"player": "future-player", "player_name": "Future"}]},
         "actions": [{"team": "new-id", "kind": "ban", "champion": "Ahri"}],
     }
-    games.write_text("\n".join(json.dumps(game) for game in (earlier, same_day)), encoding="utf-8")
+    games.write_text("\n".join(json.dumps(game) for game in (earlier, older, same_day)), encoding="utf-8")
     catalog = tmp_path / "champions.json"
     catalog.write_text(json.dumps({"16.2": POOL, "16.9": POOL, "16.17": POOL}), encoding="utf-8")
     recorder = RecordingForecaster()
@@ -56,7 +68,7 @@ def test_prospective_starts_clean_and_excludes_same_day_team_and_player_evidence
         assert client.get("/api/bootstrap").json()["patches"] == ["16.17", "16.9", "16.2"]
         result = client.post("/api/plans", json={
             **MATCHUP,
-            "rosters": {"Northstar": ["known", "Future"], "Open Circuit": ["Unpublished"]},
+            "rosters": {"Northstar": ["known", "tRaNsFeR", "Shared", "Future"], "Open Circuit": ["Unpublished"]},
         })
         assert result.status_code == 201, result.text
         plan = result.json()
@@ -80,7 +92,7 @@ def test_prospective_starts_clean_and_excludes_same_day_team_and_player_evidence
         assert forecast["date"] == MATCHUP["date"]
         assert forecast["first"] == "north-id"
         assert forecast["second"] != "new-id"
-        assert forecast["rosters"][forecast["first"]] == ["existing-player"]
+        assert forecast["rosters"][forecast["first"]] == ["existing-player", "transfer-id"]
         assert forecast["rosters"][forecast["second"]] == []
         assert client.get(f"/api/plans/{plan['id']}").json()["source"] == "prospective"
 
@@ -104,3 +116,36 @@ def test_named_replays_reject_prospective_identity_fields(app_and_forecaster):
     with TestClient(app) as client:
         result = client.post("/api/plans", json={**MATCHUP, "match_id": "poppy-game-three"})
         assert result.status_code == 422
+
+
+def test_public_browser_and_server_limit_estimates_to_dates_after_validation(tmp_path, monkeypatch):
+    from fearless.browser import open_demo
+
+    monkeypatch.delenv("FEARLESS_BUNDLE", raising=False)
+    monkeypatch.delenv("FEARLESS_GAMES", raising=False)
+    monkeypatch.delenv("FEARLESS_CATALOG", raising=False)
+    browser = open_demo()
+
+    def browser_node(payload):
+        created = json.loads(browser("/plans", json.dumps(payload), "[]"))
+        plan = created["data"]
+        state = json.loads(browser(
+            f"/plans/{plan['id']}/nodes/{plan['root_id']}", None, json.dumps(created["plans"]),
+        ))
+        return state["data"]
+
+    with TestClient(create_app(database=tmp_path / "public-plans.sqlite3")) as client:
+        for cutoff, quality in (("2026-06-01", "estimated"), ("2026-04-10", None)):
+            request = {**MATCHUP, "patch": "16.17", "date": cutoff}
+            stored = client.post("/api/plans", json=request)
+            assert stored.status_code == 201, stored.text
+            plan = stored.json()
+            server_state = client.get(f"/api/plans/{plan['id']}/nodes/{plan['root_id']}").json()
+            local_state = browser_node(request)
+            assert server_state["suggestions"] == local_state["suggestions"]
+            for state in (server_state, local_state):
+                forecast = state["forecast"]
+                assert forecast["as_of"] < cutoff
+                assert forecast.get("probability_quality") == quality
+                assert bool(state["outlook"]) == bool(quality)
+                assert all((row["score"] is not None) == bool(quality) for row in state["suggestions"])

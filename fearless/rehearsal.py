@@ -2,9 +2,10 @@
 
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from fearless.app_catalog import Match, MatchCatalog, PROSPECTIVE_ID
-from fearless.app_store import RehearsalError, new_id
+from fearless.app_error import RehearsalError
 from fearless.rules import (
     DRAFT_LENGTH,
     DraftAction,
@@ -51,10 +52,10 @@ def new_plan(match: Match, pool: tuple[str, ...], settings: dict) -> dict:
         and patch == meta["patch"]
         and first == meta["first"]
     )
-    root = new_id()
+    root = uuid4().hex
     coach = match.coach_team
     plan = {
-        "id": new_id(),
+        "id": uuid4().hex,
         "match_id": meta["id"],
         "title": settings.get("title") or meta["title"],
         "teams": meta["teams"],
@@ -220,7 +221,7 @@ def apply_action(
             plan["selected_node"] = node["id"]
             return
 
-    node_id = new_id()
+    node_id = uuid4().hex
     plan["nodes"].append({
         "id": node_id, "parent_id": parent_id, "game": game, "first": order, "team": team,
         "kind": kind, "champion": champion, "origin": "historical" if historical else "rehearsal",
@@ -390,8 +391,20 @@ def forecast_at(plan: dict, pos: Position, forecaster: Any, prefix: list[DraftAc
     )
 
 
+def _probability_quality(result: dict) -> str | None:
+    if result.get("calibrated"):
+        return "calibrated"
+    if (
+        result.get("model_source") == "public" and result.get("method") == "public_frequencies"
+        and result.get("probability_quality") == "estimated"
+    ):
+        return "estimated"
+    return None
+
+
 def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict) -> dict | None:
-    if pos.team == plan["coach_team"] or not initial.get("calibrated"):
+    quality = _probability_quality(initial)
+    if pos.team == plan["coach_team"] or quality is None:
         return None
 
     from fearless.outlook import lookahead
@@ -414,13 +427,9 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
         games = [*pos.games[:-1], list(prefix)]
         return pin_status(plan["pool"], games, pin["game"], pin["champion"], pin["team"])
 
-    calibrated = True
-
     def scored_forecast(prefix):
-        nonlocal calibrated
         result = forecast(prefix)
-        if not result.get("calibrated"):
-            calibrated = False
+        if _probability_quality(result) != quality:
             return {"status": "unavailable", "choices": []}
         return result
 
@@ -429,10 +438,11 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
         first=pos.first, second=pos.second, coach_team=plan["coach_team"],
         forecast=scored_forecast, evaluate_pin=evaluate if pin else None,
     )
-    if not calibrated or result["status"] != "scored":
+    if result["status"] != "scored":
         return None
     return {
-        **result, "calibrated": True,
+        **result, "calibrated": quality == "calibrated", "probability_quality": quality,
+        "model_source": initial.get("model_source"),
         **({field: pin[field] for field in ("champion", "game", "player")} if pin else {}),
     }
 
@@ -452,22 +462,25 @@ def node_state(plan: dict, node_id: str, forecaster: Any = None, frequencies: An
         result = forecast_at(plan, pos, forecaster, pos.current, limit=3) if forecaster is not None else {}
         if result.get("as_of") and result["choices"]:
             method = result["method"].replace("_", " ")
-            calibrated = bool(result.get("calibrated"))
+            quality = _probability_quality(result)
             source = f"Historical {method} ranking · evidence through {result['as_of']}"
-            if calibrated:
+            if quality == "calibrated":
                 source += " · calibrated for named champion actions"
+            elif quality == "estimated":
+                source = f"Open LCS draft estimate · training through {result['as_of']}"
             forecast = {
                 key: result.get(key) for key in (
-                    "as_of", "method", "calibration_through", "probability_condition",
+                    "as_of", "method", "calibration_through", "probability_condition", "model_source",
                 )
             }
-            forecast["calibrated"] = calibrated
+            forecast["calibrated"] = quality == "calibrated"
+            forecast["probability_quality"] = quality
             forecast["roster_evidence"] = _public_roster_evidence(plan, result)
             for choice in result["choices"]:
                 if choice["champion"] in legal:
                     suggestions.append({
                         "champion": choice["champion"],
-                        "score": choice["probability"] if calibrated else None,
+                        "score": choice["probability"] if quality else None,
                         "reason": " · ".join(choice["evidence"]) or "Historical legal-action evidence.",
                         "games": choice.get("games"),
                         "roles": choice.get("roles", []),
