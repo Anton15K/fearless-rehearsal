@@ -18,7 +18,7 @@ test = ["pytest>=8,<10", "httpx>=0.27,<1"]
 include = ["fearless*"]
 
 [tool.setuptools.package-data]
-fearless = ["assets/*.json"]
+fearless = ["assets/*.json", "assets/*.jsonl", "assets/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

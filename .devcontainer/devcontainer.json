@@ -1,0 +1,8 @@
+{
+  "name": "Fearless Rehearsal",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "features": {"ghcr.io/devcontainers/features/node:1": {"version": "22"}},
+  "forwardPorts": [8000],
+  "portsAttributes": {"8000": {"label": "Rehearsal board", "onAutoForward": "openPreview"}},
+  "postAttachCommand": "if ! curl -fsS http://localhost:8000/api/bootstrap >/dev/null 2>&1; then HOST=0.0.0.0 scripts/start.sh; fi"
+}
