@@ -22,6 +22,8 @@ Of 106 indexed games, 101 games in 25 complete series passed the source checks. 
 
 On the 599 previously examined games, using one shared historical feed for all three methods, role-first found 312/1,797 pairs (17.36%), the existing model 234 (13.02%), and patch frequency 219 (12.19%). These development diagnostics do not count toward the Korean confirmation decision.
 
+The upcoming Game 1 operating pilot and the live observation workflow are documented separately. [Private pair forecast log](pair-shadow.md)
+
 ## Repeat the private comparison
 
 Use the verified private artifacts from the [previous study](transfer-evaluation.md#reproduce-and-serve-privately). `events.jsonl` there contains 599 previously examined games. The pending pilot uses Riot patch 16.23; this exact public pool is joined to the earlier production catalog before creating the freeze.
