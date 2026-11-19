@@ -20,7 +20,7 @@ def main():
     for patch in args.patches:
         version = next(v for v in versions if v.startswith(patch + "."))
         data = fetch(f"https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/champion.json")
-        catalog[patch] = sorted(c["name"] for c in data["data"].values())
+        catalog[patch] = sorted({c["name"] for c in data["data"].values()})
     args.output.write_text(json.dumps(catalog, sort_keys=True) + "\n")
 
 

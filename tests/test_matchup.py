@@ -149,3 +149,15 @@ def test_public_browser_and_server_limit_estimates_to_dates_after_validation(tmp
                 assert forecast.get("probability_quality") == quality
                 assert bool(state["outlook"]) == bool(quality)
                 assert all((row["score"] is not None) == bool(quality) for row in state["suggestions"])
+
+
+def test_prospective_removes_match_specific_disables_from_every_branch(app_and_forecaster):
+    app, _ = app_and_forecaster
+    with TestClient(app) as client:
+        response = client.post("/api/plans", json={**MATCHUP, "disabled": ["pOpPy"]})
+        response.raise_for_status()
+        plan = response.json()
+        path = f"/api/plans/{plan['id']}/nodes/{plan['selected_node']}"
+        assert "Poppy" not in client.get(path).json()["legal"]
+        invalid = client.post("/api/plans", json={**MATCHUP, "disabled": ["Unknown Champion"]})
+        assert invalid.status_code == 422

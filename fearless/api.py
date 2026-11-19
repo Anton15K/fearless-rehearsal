@@ -46,6 +46,8 @@ class Payload(BaseModel):
 
 class PlanInput(Payload):
     match_id: Identifier
+    event: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)] | None = None
+    disabled: Annotated[list[Name], Field(max_length=30)] | None = None
     teams: Annotated[list[Name], Field(min_length=2, max_length=2)] | None = None
     coach_team: Name | None = None
     date: Annotated[str, StringConstraints(pattern=r"^\d{4}-\d{2}-\d{2}$")] | None = None
@@ -103,7 +105,16 @@ def _forecaster(bundle: Path | None) -> Any:
             from fearless.challengers import DraftChallengers
 
             try:
-                return DraftChallengers.load(bundle, policy)
+                parent = DraftChallengers.load(bundle, policy)
+                event_policy = os.environ.get("FEARLESS_ADAPTATION")
+                if event_policy:
+                    from fearless.event_forecaster import EventForecaster
+
+                    try:
+                        return EventForecaster.load(parent, bundle, policy, event_policy)
+                    except Exception:
+                        LOGGER.exception("Could not load event adaptation. Serving the verified parent policy.")
+                return parent
             except Exception:
                 # Optional sidecars include third-party binary loaders with their own exceptions.
                 LOGGER.exception("Failed to load challenger policy. Serving the frozen draft bundle.")
@@ -160,6 +171,8 @@ def create_app(
         app.state.matches = MatchCatalog(games_path, catalog_path, public_games)
         bundle_path = _path(None, "FEARLESS_BUNDLE")
         app.state.forecaster = forecaster if forecaster is not None else _forecaster(bundle_path)
+        if getattr(app.state.forecaster, "accepts_event", False):
+            app.state.matches.teams.add(app.state.forecaster.released_games(), preferred=True)
         app.state.public_forecaster = _public_forecaster(public_artifact)
         yield
 
@@ -171,7 +184,9 @@ def create_app(
 
     @app.get("/api/bootstrap")
     def bootstrap():
-        return app.state.matches.bootstrap()
+        result = app.state.matches.bootstrap()
+        events = getattr(app.state.forecaster, "events", None)
+        return {**result, "events": events} if events else result
 
     @app.get("/api/plans")
     def list_plans(owner: Owner):

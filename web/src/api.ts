@@ -15,6 +15,8 @@ export type Match = {
 
 export type PlanInput = {
   match_id: string
+  event?: string
+  disabled?: string[]
   teams?: [string, string]
   coach_team?: string
   date?: string
@@ -32,6 +34,7 @@ export type Bootstrap = {
   champions: string[]
   matches: Match[]
   default_match: string
+  events?: string[]
   patches?: string[]
 }
 
@@ -99,7 +102,7 @@ export type NodeState = {
   source: string
   completed?: boolean
   outlook?: Outlook | null
-  forecast?: { calibrated?: boolean; method?: string; as_of?: string; probability_quality?: string } | null
+  forecast?: { calibrated?: boolean; method?: string; model_source?: string; as_of?: string; probability_quality?: string } | null
   history?: { team?: string; kind?: string; champion?: string | null; next?: Action | null } | null
 }
 

@@ -3,6 +3,7 @@ import type { Action } from './draft'
 export type Outlook = {
   status: 'scored' | 'awaiting_coach' | 'unavailable' | 'complete'
   method: string | null
+  model_source?: string
   calibrated?: boolean
   probability_quality?: string
   champion?: string
@@ -25,10 +26,15 @@ export function isPublicEstimate(forecast?: { method?: string | null; probabilit
   return forecast?.method === 'public_frequencies' && forecast.probability_quality === 'estimated'
 }
 
+export function isEventEstimate(forecast?: { method?: string | null; model_source?: string; probability_quality?: string } | null) {
+  return forecast?.model_source === 'private_event' && forecast.probability_quality === 'estimated'
+    && ['refreshed_pick', 'patch_pick_adaptation', 'mixed'].includes(forecast.method ?? '')
+}
+
 export function modeledOutlook(outlook: Outlook | null | undefined) {
   if (outlook?.status !== 'scored' || !outlook.conditional.endsWith('opponent_actions_given_named_champion')) return null
   const calibrated = outlook.calibrated === true && outlook.method && statisticalMethods.has(outlook.method)
-  if (!calibrated && !isPublicEstimate(outlook)) return null
+  if (!calibrated && !isPublicEstimate(outlook) && !isEventEstimate(outlook)) return null
   return {
     ...outlook,
     pairs: [...outlook.pairs].sort((left, right) => right.probability - left.probability),
