@@ -1,4 +1,5 @@
 import type { Action, DraftNode } from './draft'
+import type { Outlook } from './outlook'
 
 export type Match = {
   id: string
@@ -8,6 +9,7 @@ export type Match = {
   date: string
   format?: string
   source?: string
+  first?: string
   rosters?: Record<string, string[] | Record<string, string>>
 }
 
@@ -65,6 +67,7 @@ export type Plan = PlanSummary & {
   priority?: string
   target_game?: number
   player?: string
+  coach_team?: string
 }
 
 export type Suggestion = {
@@ -89,6 +92,8 @@ export type NodeState = {
   pins: Pin[]
   source: string
   completed?: boolean
+  outlook?: Outlook | null
+  forecast?: { calibrated?: boolean; method?: string; as_of?: string } | null
   history?: { team?: string; kind?: string; champion?: string | null; next?: Action | null } | null
 }
 

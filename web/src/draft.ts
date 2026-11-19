@@ -54,11 +54,13 @@ export function kindLabel(kind: string) {
   if (kind === 'ban') return 'Ban'
   if (kind === 'pick') return 'Pick'
   if (kind === 'start' || kind === 'root') return 'Opening position'
+  if (kind === 'next_game') return 'Game draft complete'
   if (kind === 'complete') return 'Series complete'
   return kind.charAt(0).toUpperCase() + kind.slice(1)
 }
 
 export function phaseLabel(kind: string, actions: Action[]) {
+  if (kind === 'next_game') return 'Game draft complete'
   if (kind === 'complete') return 'Series complete'
   const count = actions.length
   if (count < 6) return 'First ban phase'

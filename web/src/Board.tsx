@@ -4,10 +4,12 @@ import {
   Crosshair, GitBranch, GitCompareArrows, Link2, ListFilter, Lock, Pin as PinIcon,
   Play, Plus, ShieldCheck, Sparkles, Workflow,
 } from 'lucide-react'
-import type { NodeState, Pin, Plan, Suggestion } from './api'
+import type { NodeState, Pin, Plan } from './api'
 import { ActionIcon, LockCount, Portrait } from './common'
 import { branchPath, kindLabel, nodeLabel, phaseLabel, slotGroups, visibleBranches } from './draft'
 import { matchFormat } from './Prep'
+import { OutlookPanel } from './OutlookPanel'
+import { probabilityLabel } from './outlook'
 
 type BoardProps = {
   plan: Plan
@@ -28,6 +30,7 @@ export function Board({ plan, state, busy, chooseNode, commit, advance, openCust
   const displayFirst = atOpening ? first : state.first
   const displaySecond = plan.teams.find(team => team !== displayFirst) || state.second
   const activeTeam = atOpening ? displayFirst : state.team
+  const betweenGames = state.kind === 'next_game'
   const move = (champion: string | null) => commit(champion, atOpening ? displayFirst : undefined)
 
   return (
@@ -70,19 +73,46 @@ export function Board({ plan, state, busy, chooseNode, commit, advance, openCust
           <BranchMap plan={plan} state={state} select={chooseNode} compare={openCompare} custom={() => openCustom(atOpening ? displayFirst : undefined)} busy={busy} />
           <PinPanel pins={state.pins} add={() => openPin()} maxGame={Number(matchFormat(plan).slice(-1)) || 5} game={state.game} />
         </div>
-        <DecisionPanel
-          key={state.node_id}
-          state={state}
-          team={activeTeam}
-          busy={busy}
-          commit={move}
-          advance={advance}
-          historical={displayFirst === state.first}
-          custom={() => openCustom(atOpening ? displayFirst : undefined)}
-          pin={champion => openPin(champion)}
-        />
+        <div className="board-inspector">
+          {betweenGames ? <NextGame state={state} teams={plan.teams} busy={busy} commit={commit} advance={advance} /> :
+            <DecisionPanel
+              key={state.node_id}
+              state={state}
+              team={activeTeam}
+              busy={busy}
+              commit={move}
+              advance={advance}
+              historical={displayFirst === state.first}
+              custom={() => openCustom(atOpening ? displayFirst : undefined)}
+              pin={state.game < (Number(matchFormat(plan).slice(-1)) || 5) ? champion => openPin(champion) : undefined}
+            />}
+          <OutlookPanel outlook={state.outlook} unavailable={plan.source === 'historical' && Boolean(activeTeam && plan.coach_team && activeTeam !== plan.coach_team)} />
+        </div>
       </div>
     </div>
+  )
+}
+
+function NextGame({ state, teams, busy, commit, advance }: {
+  state: NodeState; teams: string[]; busy: boolean; commit: BoardProps['commit']; advance: () => void
+}) {
+  const [first, setFirst] = useState(state.first)
+  const game = state.game + 1
+  return (
+    <section className="panel decision-panel" aria-labelledby="next-game-title">
+      <header className="panel-heading decision-header">
+        <div><span className="section-kicker"><Crosshair size={15} /> Game {state.game} draft complete</span><h2 id="next-game-title">Start Game {game}</h2></div>
+      </header>
+      {state.history && <button type="button" className="historical-step" onClick={advance} disabled={busy}>
+        <Play size={15} /><span>Start historical Game {game}</span><ChevronRight size={16} />
+      </button>}
+      <form className="next-game-form" onSubmit={event => { event.preventDefault(); commit(null, first) }}>
+        <label className="field">Game {game} first pick <select aria-label={`Game ${game} first pick`} value={first} onChange={event => setFirst(event.target.value)}>
+          {teams.map(team => <option key={team}>{team}</option>)}
+        </select></label>
+        <button className="button button-accent" type="submit" disabled={busy}>Start Game {game} rehearsal <ArrowRight size={15} /></button>
+      </form>
+    </section>
   )
 }
 
@@ -119,19 +149,19 @@ const groups = [
 function DraftMatrix({ state, first, second, team }: { state: NodeState; first: string; second: string; team: string | null }) {
   const nextGroup = state.actions.length < 6 ? 0 : state.actions.length < 12 ? 1 : state.actions.length < 16 ? 2 : 3
   return (
-    <div className="draft-scroll">
+    <div className="draft-scroll" tabIndex={0} role="region" aria-label="Draft picks and bans">
       <div className="draft-matrix">
         <div className="matrix-labels">
           <span>Side</span>
           {groups.map((group, index) => (
-            <span className={`matrix-label ${index === nextGroup && !state.completed ? 'phase-active' : ''}`} key={group.name}>
+            <span className={`matrix-label ${index === nextGroup && !state.completed && state.kind !== 'next_game' ? 'phase-active' : ''}`} key={group.name}>
               <ActionIcon kind={group.kind} size={12} /> {group.name}
             </span>
           ))}
         </div>
         {[first, second].map((side, sideIndex) => (
           <div className={`matrix-row ${sideIndex ? 'side-red' : 'side-blue'}`} key={side}>
-            <div className="team-label"><span className="side-dot" /><div><strong>{side}</strong><small>{sideIndex ? 'RED SIDE' : 'BLUE SIDE'}</small></div></div>
+            <div className="team-label"><span className="side-dot" /><div><strong>{side}</strong><small>{sideIndex ? 'SECOND PICK' : 'FIRST PICK'}</small></div></div>
             {slotGroups(state.actions, side).map((group, groupIndex) => (
               <div className="slot-group" key={groups[groupIndex].name}>
                 {group.map((action, slotIndex) => {
@@ -159,6 +189,8 @@ function BranchMap({ plan, state, select, compare, custom, busy }: {
   const path = useMemo(() => branchPath(plan.nodes, state.node_id), [plan.nodes, state.node_id])
   const onPath = new Set(path.map(node => node.id))
   const layers = visibleBranches(plan.nodes, state.node_id)
+  const nextGames = state.kind === 'next_game' ? plan.nodes.filter(node => node.parent_id === state.node_id && node.game > state.game) : []
+  if (nextGames.length) layers.push(nextGames)
   const track = useRef<HTMLDivElement>(null)
   const compareReady = plan.nodes.some(node =>
     node.parent_id !== null && plan.nodes.some(sibling => sibling.id !== node.id && sibling.parent_id === node.parent_id),
@@ -204,7 +236,7 @@ function BranchMap({ plan, state, select, compare, custom, busy }: {
               })}
             </div>
           ))}
-          {!state.completed && !plan.nodes.some(node => node.parent_id === state.node_id) &&
+          {!state.completed && state.kind !== 'next_game' && !plan.nodes.some(node => node.parent_id === state.node_id) &&
             <div className="tree-tier"><span className="tier-line tier-line-new" /><button type="button" className="branch-node branch-new" disabled={busy} onClick={custom}><Plus size={17} /> Add a branch</button></div>}
         </div>
       </div>
@@ -218,12 +250,13 @@ function BranchMap({ plan, state, select, compare, custom, busy }: {
 
 function DecisionPanel({ state, team, busy, commit, advance, historical, custom, pin }: {
   state: NodeState; team: string | null; busy: boolean; commit: (champion: string | null) => void
-  advance: () => void; historical: boolean; custom: () => void; pin: (champion: string) => void
+  advance: () => void; historical: boolean; custom: () => void; pin?: (champion: string) => void
 }) {
   const options = state.suggestions.filter(option => state.legal.includes(option.champion))
   const [selected, setSelected] = useState(options[0]?.champion)
   const evidence = options.find(option => option.champion === selected)
   const nextHistorical = state.history
+  const showLikelihood = state.forecast?.calibrated === true
   const verb = kindLabel(state.kind)
   return (
     <section className="panel decision-panel" aria-labelledby="decision-title">
@@ -250,7 +283,7 @@ function DecisionPanel({ state, team, busy, commit, advance, historical, custom,
                   <span className="suggestion-rank">{String(index + 1).padStart(2, '0')}</span>
                   <Portrait name={option.champion} size={34} />
                   <span className="suggestion-title"><strong>{option.champion}</strong>{option.roles?.length ? <small>{option.roles.join(' / ')}</small> : null}</span>
-                  {option.score != null && <span className="suggestion-score" title="Ranking score">{formatScore(option.score)}</span>}
+                  {showLikelihood && option.score != null && <span className="suggestion-score" title="Likelihood conditional on a named champion action">{probabilityLabel(option.score)}</span>}
                   <ChevronRight size={15} />
                 </button>
               ))}
@@ -261,9 +294,9 @@ function DecisionPanel({ state, team, busy, commit, advance, historical, custom,
               <div className="evidence-top"><span><ShieldCheck size={14} /> Legal now</span><span>{evidence.games == null ? 'Sample unavailable' : `${evidence.games} ${evidence.games === 1 ? 'game' : 'games'}`}</span></div>
               <p>{evidence.reason}</p>
               <div className="evidence-source">{state.source}</div>
-              <div className="evidence-actions">
+              <div className={`evidence-actions ${pin ? "with-pin" : ""}`}>
                 <button type="button" className="button button-accent" onClick={() => commit(evidence.champion)} disabled={busy}><ActionIcon kind={state.kind} /> {verb} {evidence.champion}<ArrowRight size={15} /></button>
-                <button type="button" className="icon-button button-secondary" onClick={() => pin(evidence.champion)} aria-label={`Pin ${evidence.champion} for a future game`} title="Pin for a future game"><PinIcon size={16} /></button>
+                {pin && <button type="button" className="icon-button button-secondary" onClick={() => pin(evidence.champion)} aria-label={`Pin ${evidence.champion} for a future game`} title="Pin for a future game"><PinIcon size={16} /></button>}
               </div>
             </div>
           )}
@@ -277,10 +310,6 @@ function DecisionPanel({ state, team, busy, commit, advance, historical, custom,
   )
 }
 
-function formatScore(score: NonNullable<Suggestion['score']>) {
-  return Number.isInteger(score) ? String(score) : score.toFixed(2)
-}
-
 function PinPanel({ pins, add, maxGame, game }: { pins: Pin[]; add: () => void; maxGame: number; game: number }) {
   return (
     <section className="panel pin-panel" aria-labelledby="pin-title">
@@ -292,13 +321,19 @@ function PinPanel({ pins, add, maxGame, game }: { pins: Pin[]; add: () => void; 
         <div className="pin-row" key={`${item.game}-${item.player}-${item.champion}`}>
           <Portrait name={item.champion} size={36} />
           <div className="pin-copy"><strong>{item.champion}</strong><span>Game {item.game} · {item.player}</span><p>{item.reason}{item.backup && ` Backup: ${item.backup}.`}</p></div>
-          <span className={`pin-status ${item.status.toLowerCase().includes('lock') || item.status.toLowerCase().includes('risk') ? 'pin-warn' : ''}`}>{item.status.replaceAll('_', ' ')}</span>
+          <span className={`pin-status ${pinTone(item.status)}`}>{item.status.replaceAll('_', ' ')}</span>
         </div>
       ))}</div> : (
         <div className="pin-empty"><span className="pin-empty-icon"><PinIcon size={18} /></span><p>Save a priority champion for a later game and track its availability across branches.</p></div>
       )}
     </section>
   )
+}
+
+function pinTone(status: string) {
+  if (status === 'conflict' || status === 'locked') return 'pin-conflict'
+  if (status === 'still_possible' || status === 'at_risk') return 'pin-warn'
+  return ''
 }
 
 export function RulesContent({ state }: { state: NodeState }) {

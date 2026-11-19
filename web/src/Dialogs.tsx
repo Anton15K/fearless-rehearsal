@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ArrowRight, Crosshair, GitCompareArrows, Lock, Pin as PinIcon, Search, ShieldCheck } from 'lucide-react'
 import { api, type NodeState, type Plan } from './api'
 import { ActionIcon, Dialog, Portrait } from './common'
-import { branchPath, nodeLabel } from './draft'
+import { branchPath, kindLabel, nodeLabel } from './draft'
 
 export function ChampionDialog({ state, select, close, busy }: { state: NodeState; select: (champion: string) => void; close: () => void; busy: boolean }) {
   const [query, setQuery] = useState('')
@@ -54,15 +54,15 @@ export function PinDialog({ plan, champion, targetGame, backup, champions, state
   return (
     <Dialog title="Pin for a future game" description="Track whether this branch preserves the champion for your priority game." close={close}>
       {games.length ? <form className="form-grid" onSubmit={submit}>
-        <label className="field">Champion <select required name="champion" value={selected} onChange={event => setSelected(event.target.value)}>
+        <label className="field">Champion <select required name="champion" aria-label="Champion" value={selected} onChange={event => setSelected(event.target.value)}>
           <option value="">Choose a champion</option>
           {sorted.map(name => <option key={name}>{name}</option>)}
         </select></label>
-        <label className="field">Target game <select name="game" defaultValue={games.includes(defaultGame) ? defaultGame : games[0]}>
+        <label className="field">Target game <select name="game" aria-label="Target game" defaultValue={games.includes(defaultGame) ? defaultGame : games[0]}>
           {games.map(game => <option key={game} value={game}>Game {game}</option>)}
         </select></label>
         <label className="field">Player or role <input name="player" required defaultValue={plan.player || ''} placeholder="e.g. Mid laner" maxLength={80} /></label>
-        <label className="field">Backup <select name="backup" defaultValue={backup || ''}>
+        <label className="field">Backup <select name="backup" aria-label="Backup" defaultValue={backup || ''}>
           <option value="">No backup chosen</option>
           {sorted.filter(name => name !== selected).map(name => <option key={name}>{name}</option>)}
         </select></label>
@@ -78,16 +78,20 @@ export function CompareDialog({ plan, current, open, close }: { plan: Plan; curr
   const pair = currentNode?.parent_id
     ? options.find(node => node.id !== current && node.parent_id === currentNode.parent_id)
     : undefined
+  const children = options.filter(node => node.parent_id === current)
   const alternate = pair || options.filter(node => node.id !== current).at(-1)
-  const [left, setLeft] = useState(current)
-  const [right, setRight] = useState(alternate?.id || '')
+  const [left, setLeft] = useState(children.length > 1 ? children[0].id : current)
+  const [right, setRight] = useState(children.length > 1 ? children[1].id : alternate?.id || '')
   const [comparison, setComparison] = useState<[NodeState, NodeState] | null>(null)
   const [error, setError] = useState('')
   const labels = useMemo(() => Object.fromEntries(options.map(option => {
     const path = branchPath(options, option.id)
     const sameGame = path.filter(node => node.game === option.game)
     const previous = sameGame.at(-2)
-    return [option.id, `Game ${option.game} · ${nodeLabel(option)}${previous ? ` after ${nodeLabel(previous)}` : ''}`]
+    const action = option.kind === 'ban' || option.kind === 'pick'
+    const description = action && option.champion ? `${kindLabel(option.kind)} ${option.champion}` : nodeLabel(option)
+    const previousAction = previous?.champion ? ` after ${previous.champion}` : ''
+    return [option.id, action ? `Game ${option.game} · ${description}${previousAction}` : description]
   })), [options])
 
   useEffect(() => {
@@ -109,7 +113,7 @@ export function CompareDialog({ plan, current, open, close }: { plan: Plan; curr
           <div className="form-grid compare-selectors">
             {[{ name: 'Branch A', value: left, change: setLeft }, { name: 'Branch B', value: right, change: setRight }].map(branch => (
               <label className="field" key={branch.name}>{branch.name}
-                <select value={branch.value} onChange={event => branch.change(event.target.value)}>
+                <select aria-label={branch.name} value={branch.value} onChange={event => branch.change(event.target.value)}>
                   {options.map(option => <option key={option.id} value={option.id}>{labels[option.id]}</option>)}
                 </select>
               </label>
@@ -186,7 +190,7 @@ export function CoachBrief({ plan, state, save, busy }: {
         <header className="panel-heading"><div><span className="section-kicker"><Crosshair size={15} /> Game {state.game} handoff</span><h2 id="brief-form-title">Brief for this branch</h2></div></header>
         <form className="form-grid" onSubmit={event => { event.preventDefault(); if (text.trim()) save(text.trim(), backup || undefined) }}>
           <label className="field wide">Coach notes <textarea rows={11} value={text} onChange={event => setText(event.target.value)} required /></label>
-          <label className="field wide">Backup champion <select value={backup} onChange={event => setBackup(event.target.value)}>
+          <label className="field wide">Backup champion <select aria-label="Backup champion" value={backup} onChange={event => setBackup(event.target.value)}>
             <option value="">No backup chosen</option>
             {available.map(champ => <option key={champ}>{champ}</option>)}
           </select></label>

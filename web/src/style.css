@@ -128,7 +128,7 @@ a { color: inherit }
 .first-control { display: flex; align-items: center; gap: 7px; color: var(--secondary); font-size: 12px }
 .first-control select { border: 1px solid var(--line); border-radius: 5px; background: #192020; padding: 5px; color: var(--text) }
 .draft-scroll { overflow-x: auto; padding: 0 17px 12px }
-.draft-matrix { --draft-columns: minmax(90px,.8fr) minmax(163px,3fr) minmax(163px,3fr) minmax(105px,2fr) minmax(105px,2fr); min-width: 730px }
+.draft-matrix { --draft-columns: minmax(111px,.88fr) minmax(163px,3fr) minmax(163px,3fr) minmax(105px,2fr) minmax(105px,2fr); min-width: 730px }
 .matrix-labels, .matrix-row { display: grid; grid-template-columns: var(--draft-columns); gap: 7px }
 .matrix-labels { min-height: 25px; align-items: start; padding: 1px 2px; color: var(--muted); font: 500 10px var(--mono); letter-spacing: .08em; text-transform: uppercase }
 .matrix-label { display: flex; align-items: center; gap: 6px; padding-left: 4px }
@@ -195,7 +195,8 @@ a { color: inherit }
 .evidence-top > span:first-child { display: flex; align-items: center; gap: 6px; color: var(--accent) }
 .evidence-card p { color: var(--secondary); font-size: 13px }
 .evidence-source { color: var(--muted); font-size: 11px }
-.evidence-actions { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-top: 2px }
+.evidence-actions { display: grid; grid-template-columns: 1fr; gap: 6px; margin-top: 2px }
+.evidence-actions.with-pin { grid-template-columns: 1fr auto }
 .evidence-actions .button { justify-content: start; min-height: 36px }
 .evidence-actions .button svg:last-child { margin-left: auto }
 .evidence-actions .icon-button { height: 36px }
@@ -216,6 +217,7 @@ a { color: inherit }
 .pin-copy span, .pin-copy p { color: var(--muted); font-size: 12px }
 .pin-copy p { margin-top: 3px; color: var(--secondary) }
 .pin-status { padding: 4px 6px; border-radius: 4px; background: #223424; color: var(--accent); font: 10px var(--mono); text-transform: uppercase }
+.pin-conflict { background: #382421; color: #f8a6a0 }
 .pin-warn { background: #392c21; color: var(--amber) }
 
 .prep-grid { display: grid; grid-template-columns: minmax(0, .93fr) minmax(0, 1.25fr); gap: 15px; align-items: start }
@@ -351,4 +353,35 @@ a { color: inherit }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; scroll-behavior: auto !important }
+}
+
+.board-inspector { display: grid; min-width: 0; gap: 15px }
+.next-game-form { display: grid; gap: 10px; padding: 12px }
+.next-game-form .button { justify-self: start }
+.outlook-panel .panel-heading { border-bottom: 1px solid var(--line-soft) }
+.outlook-panel > .outlook-copy { margin: 10px 13px 12px }
+.outlook-body { display: grid; gap: 8px; padding: 10px 12px 12px }
+.outlook-copy { color: var(--muted); font-size: 12px }
+.mass-key { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 7px; color: var(--secondary); font: 10px var(--mono) }
+.mass-key span { display: inline-flex; align-items: center; gap: 5px }
+.mass-key i { width: 7px; height: 7px; border-radius: 2px }
+.modeled-swatch { background: var(--accent) }
+.residual-swatch { background: #677773 }
+.mass-track { height: 5px; overflow: hidden; border-radius: 3px; background: #53625e }
+.mass-track > div { height: 100%; background: var(--accent) }
+.outlook-group { display: grid; gap: 6px; margin-top: 4px }
+.outlook-group h3 { color: var(--muted); font: 500 10px var(--mono); text-transform: uppercase }
+.outlook-list { display: grid; gap: 4px; list-style: none; margin: 0; padding: 0 }
+.outlook-list li { display: flex; justify-content: space-between; align-items: center; gap: 7px; min-height: 30px; padding: 4px 6px; border: 1px solid var(--line-soft); border-radius: 4px; background: #161f1e; color: var(--secondary); font-size: 12px }
+.outlook-pair, .outlook-path { display: flex; flex-wrap: wrap; align-items: center; gap: 8px }
+.outlook-pair > span { display: flex; align-items: center; gap: 4px }
+.outlook-path > span { display: grid }
+.path-step { color: var(--muted); font: 9px var(--mono) }
+.path-mass { color: var(--accent); font: 500 11px var(--mono) }
+.outcome-list li { text-transform: capitalize }
+.outlook-paths summary { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; color: var(--secondary); cursor: pointer; font-size: 12px }
+.outlook-paths[open] summary svg { transform: rotate(180deg) }
+@media (max-width: 830px) {
+  .board-inspector { display: contents }
+  .outlook-panel { grid-row: 4 }
 }

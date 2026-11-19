@@ -72,12 +72,12 @@ function SetupForm({ match, busy, create }: { match: Match; busy: boolean; creat
       <form className="form-grid" onSubmit={submit}>
         <label className="field wide">Plan name <input name="title" placeholder={match.title} maxLength={120} /></label>
         <label className="field wide">Series priority <input name="priority" placeholder="e.g. Preserve a comfort pick for Game 3" maxLength={200} /></label>
-        <label className="field">Priority game <select name="game" defaultValue="3">{Array.from({ length: Number(matchFormat(match).slice(-1)) || 5 }, (_, index) => (
+        <label className="field">Priority game <select name="game" aria-label="Priority game" defaultValue="3">{Array.from({ length: Number(matchFormat(match).slice(-1)) || 5 }, (_, index) => (
           <option key={index} value={index + 1}>Game {index + 1}</option>
         ))}</select></label>
         <label className="field">Priority player <input name="player" placeholder="e.g. Mid laner" maxLength={80} /></label>
         <label className="field">Patch <input name="patch" defaultValue={match.patch} required maxLength={30} /></label>
-        <label className="field">First pick <select name="first">{match.teams.map(team => <option key={team}>{team}</option>)}</select></label>
+        <label className="field">First pick <select name="first" aria-label="First pick" defaultValue={match.first}>{match.teams.map(team => <option key={team}>{team}</option>)}</select></label>
         {match.teams.map((team, index) => {
           const roster = match.rosters?.[team]
           const players = Array.isArray(roster) ? roster : Object.values(roster ?? {})
