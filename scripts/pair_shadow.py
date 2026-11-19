@@ -14,6 +14,10 @@ CONTEXT = ("date", "patch", "region", "first", "second", "game_number", "locked"
 def dispatch(action, ledger, trial_id, game_id, record, freeze_path):
     if action == "score":
         return ledger.score(trial_id)
+    if action == "timing":
+        return ledger.record_verified_timing(trial_id=trial_id, game_id=game_id, **record)
+    if action == "verified-context":
+        return ledger.record_verified_context(trial_id=trial_id, game_id=game_id, **record)
     if action == "outcome":
         return ledger.record_outcome(trial_id=trial_id, game_id=game_id, **record)
     if action == "cancel":
@@ -64,7 +68,7 @@ def main():
     parser.add_argument("--ledger", type=Path, required=True)
     parser.add_argument("--trial", required=True)
     actions = parser.add_subparsers(dest="action", required=True)
-    for command in ("register", "commit-game", "window", "attest-open", "attest-unopened", "outcome", "cancel", "score"):
+    for command in ("register", "commit-game", "window", "attest-open", "attest-unopened", "timing", "verified-context", "outcome", "cancel", "score"):
         cmd = actions.add_parser(command)
         if command in ("register", "commit-game", "window"):
             cmd.add_argument("--freeze", type=Path, required=True)
