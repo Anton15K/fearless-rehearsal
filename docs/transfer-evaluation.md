@@ -34,6 +34,28 @@ The confidence candidate preserved every pick's full ranking and improved top-ch
 
 Leaguepedia supplied archived drafts, first selection, played positions and UTC records. The included stages used patches 16.10, 16.17 and 16.22. The source checks also considered EMEA Masters Summer, which was excluded before scoring. The model weights and recipes were selected using some later competitions, even though each replay exposed only earlier historical features. These results establish retrospective transfer. A prospective coach trial is still needed to measure preparation time, decision quality or match outcomes. [LPL](https://lol.fandom.com/wiki/LPL/2026_Season/Split_2_Playoffs) · [CBLOL](https://lol.fandom.com/wiki/CBLOL/2026_Season/Split_2_Playoffs) · [LCP Promotion](https://lol.fandom.com/wiki/LCP/2027_Season/Promotion)
 
+## Comparison with patch popularity
+
+A coach could simply shortlist the three most frequent legal picks, bans or previously observed consecutive pick pairs on the current patch. We compared that rule after both studies finished. It uses only earlier UTC dates and complete series, removes bans and series locks, and falls back to older patches when there is no history for the current patch. It ignores teams, players and draft position when counting frequencies. This comparison was descriptive and did not select a serving model.
+
+| Task | Opportunities | Patch popularity | Previous model | Refreshed model |
+| --- | ---: | ---: | ---: | ---: |
+| Next pick, first study | 3,830 | 645 (16.84%) | 981 (25.61%) | 1,548 (40.42%) |
+| Next ban, second study | 1,180 | 362 (30.68%) | 364 (30.85%) | 485 (41.10%) |
+| Exact unordered pair, first study | 1,149 | 122 (10.62%) | 61 (5.31%) | 136 (11.84%) |
+
+The pair model's advantage over simple pair counts was **+1.22 percentage points** (paired 95% interval **−0.62 to +3.17**). MSI favored simple pair counts, 14 to 12 hits in 213 windows. LCP favored the model, 26 to 18 in 240, as did LPL, 98 to 90 in 696. Today's evidence supports exposing pairs for exploration. Forecasting a specific two-pick branch remains a research priority. Patch-history fallback occurred on 150 single picks, 60 bans and 45 pair windows. In 27 pair windows there were fewer than three previously observed legal combinations.
+
+Run these descriptive comparisons against the corresponding study locks:
+
+```sh
+python -m scripts.coach_frequency --kind pick --bundle .local/training/final --catalog fearless/assets/champions.json \
+  --games .local/adaptation/holdout/enriched.jsonl --lock docs/event-adaptation-cohort.json \
+  --parent .local/improvements/serving.json --pair-model .local/adaptation/pair/model.json
+python -m scripts.coach_frequency --kind ban --bundle .local/training/final --catalog .local/adaptation/transfer/catalog.json \
+  --games .local/adaptation/transfer/games.jsonl --lock docs/transfer-cohort.json --prior-events .local/adaptation/serving/events.jsonl
+```
+
 ## Reproduce and serve privately
 
 Start with the artifacts from the [previous study](event-adaptation.md#repeat-the-private-run). Use cached Leaguepedia and Riot responses when reproducing historical source snapshots. Run the following commands from the repository with its data and model extras.

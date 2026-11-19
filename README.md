@@ -46,6 +46,8 @@ The private board also learns from earlier completed tournament series. On 383 p
 
 A second comparison used 118 previously unused LPL, CBLOL and LCP promotion games. Refreshing ban history raised next-ban top-three accuracy from **30.85% to 41.10%**. Pick accuracy was **41.02%** on this cohort. A trial change to pick confidence missed its log-loss criterion. The board keeps the existing pick estimates. [Ban and confidence comparison](docs/transfer-evaluation.md#confirmation-results)
 
+A simple shortlist of the most frequent legal actions on the patch scored **16.84% on picks**, **30.68% on bans** and **10.62% on exact pairs** in the corresponding comparisons. The pair model’s advantage over pair frequency remains uncertain. [Patch-popularity comparison](docs/transfer-evaluation.md#comparison-with-patch-popularity)
+
 ## Project map
 
 | Source | Responsibility |
