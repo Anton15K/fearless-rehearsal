@@ -29,7 +29,21 @@ export function OutlookPanel({ outlook, unavailable }: { outlook?: Outlook | nul
             </div>
             <div className="mass-track" aria-hidden="true"><div style={{ width: `${forecast.observed_mass * 100}%` }} /></div>
           </> : <p className="outlook-copy">Leading ranked replies. Probability estimates are unavailable at this position.</p>}
-          {projection.pairs.length > 0 && (
+          {projection.ranked_pair_alternatives?.length ? (
+            <div className="outlook-group">
+              <h3>Leading pick pairs · either order</h3>
+              <ol className="outlook-list">
+                {projection.ranked_pair_alternatives.map(pair => (
+                  <li key={pair.champions.join(' / ')}>
+                    <div>
+                      <span className="outlook-pair">{pair.champions.map(name => <span key={name}><Portrait name={name} size={23} />{name}</span>)}</span>
+                      {Boolean(pair.evidence?.length) && <small className="muted">{pair.evidence?.join(' · ')}</small>}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : projection.pairs.length > 0 && (
             <div className="outlook-group">
               <h3>Leading pick pairs · either order</h3>
               <ul className="outlook-list">

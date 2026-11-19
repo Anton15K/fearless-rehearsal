@@ -38,7 +38,9 @@ For an upcoming series, choose **Match prep → New matchup**. Enter both teams,
 
 The top three are three candidates for **one next action**. A path combines successive forecasts and stops at the coach’s next decision. The board displays how much probability the visible paths cover and how much lies outside them. It does not estimate which team wins the match.
 
-On 238 held-out pro games, the serving models put the actual next champion in the top three on **38.45% of picks** and **37.86% of bans**. The dated frequency baseline scored 20.42% and 30.50%. [Dataset, evaluation and training instructions](docs/methodology.md)
+On 238 held-out pro games, the original private models put the actual next champion in the top three on **38.45% of picks** and **37.86% of bans**. The dated frequency baseline scored 20.42% and 30.50%. [Dataset, evaluation and training instructions](docs/methodology.md)
+
+On the 98 games at Worlds 2026, the selected private model identified **30.92% of picks** and **31.33% of bans** in its top three. Modeling the opponent’s remaining comfort pool raised second-phase ban accuracy from **16.07% to 27.81%**. [Worlds comparison and private serving instructions](docs/challenger-evaluation.md#worlds-results-and-serving-decision)
 
 ## Project map
 

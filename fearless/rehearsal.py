@@ -381,14 +381,18 @@ def _public_roster_evidence(plan: dict, result: dict) -> dict:
     return public
 
 
-def forecast_at(plan: dict, pos: Position, forecaster: Any, prefix: list[DraftAction], limit: int) -> dict:
+def _forecast_context(plan: dict, pos: Position, prefix: list[DraftAction]) -> dict:
     ids = plan["team_ids"]
     current = [{**action, "team": ids[action["team"]]} for action in prefix]
-    return forecaster.forecast(
+    return dict(
         date=plan["date"], patch=plan["patch"], region=plan["region"],
         first=ids[pos.first], second=ids[pos.second], game_number=pos.game, current=current,
-        locked=sorted(pos.locked), pool=plan["pool"], rosters=_model_rosters(plan), limit=limit,
+        locked=sorted(pos.locked), pool=plan["pool"], rosters=_model_rosters(plan),
     )
+
+
+def forecast_at(plan: dict, pos: Position, forecaster: Any, prefix: list[DraftAction], limit: int) -> dict:
+    return forecaster.forecast(**_forecast_context(plan, pos, prefix), limit=limit)
 
 
 def _probability_quality(result: dict) -> str | None:
@@ -409,10 +413,14 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
 
     from fearless.outlook import lookahead
 
+    turns = schedule(pos.first, pos.second)[len(pos.current):len(pos.current) + 2]
+    pair_window = len(turns) == 2 and turns[0] == turns[1] and turns[0][1] == "pick"
+    path_model = getattr(forecaster, "frozen", forecaster) if pair_window else forecaster
+
     def forecast(prefix):
-        if list(prefix) == pos.current:
+        if path_model is forecaster and list(prefix) == pos.current:
             return initial
-        return forecast_at(plan, pos, forecaster, prefix, limit=3)
+        return forecast_at(plan, pos, path_model, prefix, limit=3)
 
     future = [pin for pin in plan["pins"] if pin["game"] >= pos.game]
     pin = min(
@@ -440,6 +448,11 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
     )
     if result["status"] != "scored":
         return None
+    rank_pairs = getattr(forecaster, "rank_pairs", None)
+    if result["pairs"] and rank_pairs is not None:
+        alternatives = rank_pairs(**_forecast_context(plan, pos, pos.current), limit=3)
+        if alternatives:
+            result["ranked_pair_alternatives"] = alternatives
     return {
         **result, "calibrated": quality == "calibrated", "probability_quality": quality,
         "model_source": initial.get("model_source"),
@@ -474,6 +487,8 @@ def node_state(plan: dict, node_id: str, forecaster: Any = None, frequencies: An
                 )
             }
             forecast["calibrated"] = quality == "calibrated"
+            if result.get("pick_calibration"):
+                forecast["pick_calibration"] = result["pick_calibration"]
             forecast["probability_quality"] = quality
             forecast["roster_evidence"] = _public_roster_evidence(plan, result)
             for choice in result["choices"]:
