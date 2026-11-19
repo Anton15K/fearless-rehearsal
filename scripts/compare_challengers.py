@@ -38,6 +38,17 @@ def write_policy(bundle, output, components):
                                        for key, path in components.items()}})
 
 
+def verify_worlds_cohort(games_path, audit_path):
+    audit = json_file(audit_path)
+    if (sha256(games_path.read_bytes()).hexdigest() != audit["sha256"]
+            or (audit["games"], audit["series"]) != (98, 46)):
+        raise ValueError("Worlds cohort differs from its full 46-series importer audit.")
+    games = [json.loads(row) for row in games_path.read_text().splitlines() if row.strip()]
+    early = [g for g in games if g["date"] <= REFRESH_THROUGH]
+    if (len(games), len({g["series_id"] for g in games}), len(early), len({g["series_id"] for g in early})) != (98, 46, 45, 26):
+        raise ValueError("Worlds cohort differs from the preregistered refresh partition.")
+
+
 def whole_games(path, frozen):
     games = prepare_games(frozen.catalog.normalize_game(json.loads(line))
                           for line in path.read_text().splitlines() if line.strip())
@@ -146,6 +157,32 @@ def ci(series_values):
     return np.quantile(sums[:, 1] / sums[:, 0], [.025, .975]).tolist()
 
 
+def reference(args):
+    """Descriptive comparison against the existing frequency baseline, with two evidence cutoffs."""
+    frozen = DraftForecaster.load(args.bundle)
+    games = whole_games(args.games, frozen)
+    catalog = json_file(args.catalog)
+    ends = {}
+    for game in games:
+        sid = game["series_id"]
+        ends[sid] = max(ends.get(sid, ""), game["finished_at"])
+    released = [{**game, "finished_at": ends[game["series_id"]]} for game in games]
+    report = {}
+    for name, history in (("archive_only", frozen.games), ("earlier_completed_series", [*frozen.games, *released])):
+        model = DraftForecaster(frozen.catalog, history)
+        outcomes = defaultdict(list)
+        for game in dated_games(games, model):
+            ctx = context(game, catalog)
+            for i, action in enumerate(game["actions"]):
+                if action["champion"]:
+                    result = model.forecast(**ctx, current=game["actions"][:i], limit=3)
+                    choices = [option["champion"] for option in result["choices"]]
+                    outcomes[action["kind"]].append(action["champion"] in choices)
+        report[name] = {kind: {"hits": sum(turns), "turns": len(turns)} for kind, turns in outcomes.items()}
+    write_json(args.output, report)
+    print(json.dumps(report, indent=2))
+
+
 def compare(rows, is_pair=False):
     summary = {}
     for idx, label in enumerate(("incumbent", "candidate")):
@@ -231,16 +268,25 @@ def main():
         build.add_argument("--" + arg, type=Path, required=True)
     for arg in ("pair", "ban", "calibration"):
         build.add_argument("--" + arg, type=Path)
+    baseline = commands.add_parser("reference")
+    for arg in ("bundle", "games", "catalog", "output"):
+        baseline.add_argument("--" + arg, type=Path, required=True)
+    baseline.add_argument("--audit", type=Path)
     for name in ("refresh", "evaluate"):
         sub = commands.add_parser(name)
         for arg in ("bundle", "games", "catalog", "output", "previous" if name == "refresh" else "policy"):
             sub.add_argument("--" + arg, type=Path, required=True)
+        sub.add_argument("--audit", type=Path)
         if name == "evaluate":
             sub.add_argument("--selected-policy", type=Path)
     args = parser.parse_args()
+    if args.command != "configure":
+        verify_worlds_cohort(args.games, args.audit or args.games.with_name("audit.json"))
     if args.command == "configure":
         write_policy(args.bundle, args.output, {name: getattr(args, name) for name in ("pair", "ban", "calibration")
                                                if getattr(args, name)})
+    elif args.command == "reference":
+        reference(args)
     elif args.command == "refresh":
         refresh(args)
     else:
