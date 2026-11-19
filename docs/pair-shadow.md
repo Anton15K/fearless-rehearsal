@@ -45,6 +45,8 @@ The local collector checks for the Legends result from November 20 at 10:20 UTC 
 
 ## LEC Winter opening-day watch
 
+The hackathon submission closes January 12, 2027. The LEC opener is a follow-up model test after submission. To demonstrate a forecast before the opponent locks a pick during the hackathon, use an organizer-approved scrim with recorded lock times. Riot's free GRID feed supports delayed playback with a five-minute delay. [Hackathon deadline](https://cloud9.devpost.com/) · [Riot Open Access](https://lolesports.com/en-US/news/build-with-official-league-of-legends-esports-data)
+
 Riot announced a January 15, 2027 Winter Split opening and confirmed Fearless Draft and First Selection. Its announcement did not identify the first match or its time. The local watcher checks Leaguepedia for the opening fixture, including an exact UTC start and both team identities. Inside a 48-hour window it can generate a private Game 1 forecast for both possible first-pick teams. The collection deadline is 30 minutes before the scheduled match. [Riot season announcement](https://lolesports.com/en-GB/news/2027-lec-a-look-at-the-year-ahead)
 
 When the event patch is unavailable, the watcher checks at most two compatible candidate patches from Riot Data Dragon and records the assumption with the seal. It checks the champion vocabulary and leaves unsupported patches unscored. The three models, their parameters and historical evidence remain frozen. The accepted fixture, the exact legal pool and the resulting digest are retained privately. An independently timestamped publication of that digest and verified actual draft timing are required by the pilot verifier before a prospective score can be reported.
