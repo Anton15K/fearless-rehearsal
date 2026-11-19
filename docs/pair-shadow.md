@@ -42,3 +42,16 @@ All commands share the prefix `python -m scripts.pair_shadow --ledger PRIVATE.sq
 The operator authenticates the upstream source before submitting observations. The ledger checks its registered identifier, UTC timestamp and consistency with the immutable forecast. No live conditional picks have been claimed for the November 20 pilot.
 
 The local collector checks for the Legends result from November 20 at 10:20 UTC and retries through November 23 at 10:20 UTC while the Mac is logged in and awake. A successful read saves the completed public draft privately and ends collection. Its status remains pending independent draft timing.
+
+## LEC Winter opening-day watch
+
+Riot announced a January 15, 2027 Winter Split opening and confirmed Fearless Draft and First Selection. Its announcement did not identify the first match or its time. The local watcher checks Leaguepedia for the opening fixture, including an exact UTC start and both team identities. Inside a 48-hour window it can generate a private Game 1 forecast for both possible first-pick teams. The collection deadline is 30 minutes before the scheduled match. [Riot season announcement](https://lolesports.com/en-GB/news/2027-lec-a-look-at-the-year-ahead)
+
+When the event patch is unavailable, the watcher checks at most two compatible candidate patches from Riot Data Dragon and records the assumption with the seal. It checks the champion vocabulary and leaves unsupported patches unscored. The three models, their parameters and historical evidence remain frozen. The accepted fixture, the exact legal pool and the resulting digest are retained privately. An independently timestamped publication of that digest and verified actual draft timing are required by the pilot verifier before a prospective score can be reported.
+
+```sh
+python -m scripts.lec_pair_watch --freeze .local/role-pairs/freeze.json \
+  --output-dir .local/role-pairs/lec-winter
+```
+
+On the project Mac, the login agent runs an initial schedule check and checks hourly January 13–15 UTC. It stops on a seal, a missed deadline or the end of opening day. The Mac must be logged in and awake during the collection window. The watcher records local status, and the receipt contains no champion rankings.
