@@ -40,3 +40,10 @@ test('shows public estimates only for the declared independently fitted predicto
   assert.equal(modeledOutlook({ ...estimate, method: 'frequency' }), null)
   assert.equal(modeledOutlook({ ...estimate, method: 'public_frequencies', probability_quality: undefined }), null)
 })
+
+test('labels tournament probabilities only for evaluated private methods', () => {
+  const estimate = { ...projection, method: 'refreshed_pick', model_source: 'private_event', calibrated: false, probability_quality: 'estimated' }
+  assert.equal(modeledOutlook(estimate).observed_mass, 0.45)
+  assert.equal(modeledOutlook({ ...estimate, method: 'illustrative' }), null)
+  assert.equal(modeledOutlook({ ...estimate, model_source: 'public' }), null)
+})

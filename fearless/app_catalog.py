@@ -153,7 +153,7 @@ def _series_match(series_id: str, rows: list[dict], catalog: dict[str, tuple[str
             "source": "historical", "date": date.fromisoformat(opening["date"]).isoformat(),
             "patch": opening["patch"], "format": game_format, "first": replay[2]["first"],
             "rosters": {team: list(roster) for team, roster in players.items()},
-            "provenance": opening.get("source"),
+            "provenance": opening.get("source"), "event": opening.get("event"),
         },
         region=opening.get("region", ""),
         team_ids=team_ids,
@@ -237,6 +237,7 @@ class MatchCatalog:
             metadata={
                 "id": PROSPECTIVE_ID, "source": PROSPECTIVE_ID, "title": " vs ".join(teams),
                 "teams": teams, "first": first, "date": as_of, "format": game_format, "patch": patch,
+                "event": settings.get("event"),
                 "rosters": {team: history.roster for team, history in resolved.items() if history and history.roster},
                 "team_history": {team: {"as_of": history.as_of} if history else None for team, history in resolved.items()},
                 "roster_dates": {team: history.roster_as_of for team, history in resolved.items() if history},

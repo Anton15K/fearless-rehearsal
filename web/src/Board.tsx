@@ -9,7 +9,7 @@ import { ActionIcon, LockCount, Portrait } from './common'
 import { branchPath, kindLabel, nodeLabel, phaseLabel, slotGroups, visibleBranches } from './draft'
 import { matchFormat } from './Prep'
 import { OutlookPanel } from './OutlookPanel'
-import { isPublicEstimate, probabilityLabel } from './outlook'
+import { isEventEstimate, isPublicEstimate, probabilityLabel } from './outlook'
 
 type BoardProps = {
   plan: Plan
@@ -257,7 +257,7 @@ function DecisionPanel({ state, team, busy, commit, advance, historical, custom,
   const evidence = options.find(option => option.champion === selected)
   const nextHistorical = state.history
   const publicEstimate = isPublicEstimate(state.forecast)
-  const showLikelihood = state.forecast?.calibrated === true || publicEstimate
+  const showLikelihood = state.forecast?.calibrated === true || publicEstimate || isEventEstimate(state.forecast)
   const verb = kindLabel(state.kind)
   return (
     <section className="panel decision-panel" aria-labelledby="decision-title">

@@ -113,6 +113,7 @@ class ChampionCatalog:
         return {**game,
                 'actions': [self.normalize_action(action) for action in game['actions']],
                 'locked': sorted({self.canonical(name) for name in game.get('locked', ())}),
+                **({'disabled': [self.canonical(name) for name in game['disabled']]} if game.get('disabled') else {}),
                 'rosters': {team: [{**entry, 'champion': self.canonical(entry.get('champion'))} for entry in roster]
                             for team, roster in game.get('rosters', {}).items()}}
 
@@ -263,6 +264,9 @@ class History:
         enabled = self.catalog.available(context.date, context.patch)
         active = np.zeros(self.size, dtype=np.bool_)
         active[[self.catalog.indices[name] for name in enabled]] = True
+        for champion in game.get('disabled', ()):
+            if champion in self.catalog.indices:
+                active[self.catalog.indices[champion]] = False
         for champion in game.get('locked', ()) if context.fearless else ():
             if champion in self.catalog.indices:
                 active[self.catalog.indices[champion]] = False

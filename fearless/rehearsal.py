@@ -21,7 +21,7 @@ def create_catalog_plan(catalog: MatchCatalog, settings: dict) -> dict:
     if settings.get("match_id") == PROSPECTIVE_ID:
         match = catalog.prospective(settings)
     else:
-        if any(settings.get(field) is not None for field in ("teams", "coach_team", "date", "format")):
+        if any(settings.get(field) is not None for field in ("teams", "coach_team", "date", "format", "event")):
             raise RehearsalError(422, "Choose New matchup to set the teams and series details.")
         match = catalog.matches.get(settings.get("match_id"))
         if match is None:
@@ -57,6 +57,7 @@ def new_plan(match: Match, pool: tuple[str, ...], settings: dict) -> dict:
     plan = {
         "id": uuid4().hex,
         "match_id": meta["id"],
+        "event": meta.get("event"),
         "title": settings.get("title") or meta["title"],
         "teams": meta["teams"],
         "patch": patch,
@@ -381,26 +382,30 @@ def _public_roster_evidence(plan: dict, result: dict) -> dict:
     return public
 
 
-def _forecast_context(plan: dict, pos: Position, prefix: list[DraftAction]) -> dict:
+def _forecast_context(plan: dict, pos: Position, prefix: list[DraftAction], forecaster=None) -> dict:
     ids = plan["team_ids"]
     current = [{**action, "team": ids[action["team"]]} for action in prefix]
     return dict(
         date=plan["date"], patch=plan["patch"], region=plan["region"],
         first=ids[pos.first], second=ids[pos.second], game_number=pos.game, current=current,
         locked=sorted(pos.locked), pool=plan["pool"], rosters=_model_rosters(plan),
+        **({"event": plan.get("event"), "series_id": plan.get("match_id")}
+           if getattr(forecaster, "accepts_event", False) else {}),
     )
 
 
 def forecast_at(plan: dict, pos: Position, forecaster: Any, prefix: list[DraftAction], limit: int) -> dict:
-    return forecaster.forecast(**_forecast_context(plan, pos, prefix), limit=limit)
+    return forecaster.forecast(**_forecast_context(plan, pos, prefix, forecaster), limit=limit)
 
 
 def _probability_quality(result: dict) -> str | None:
     if result.get("calibrated"):
         return "calibrated"
     if (
-        result.get("model_source") == "public" and result.get("method") == "public_frequencies"
-        and result.get("probability_quality") == "estimated"
+        result.get("probability_quality") == "estimated" and (
+            (result.get("model_source") == "public" and result.get("method") == "public_frequencies")
+            or (result.get("model_source") == "private_event" and result.get("method") in ("refreshed_pick", "patch_pick_adaptation"))
+        )
     ):
         return "estimated"
     return None
@@ -435,10 +440,15 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
         games = [*pos.games[:-1], list(prefix)]
         return pin_status(plan["pool"], games, pin["game"], pin["champion"], pin["team"])
 
+    qualities, sources = set(), set()
+
     def scored_forecast(prefix):
         result = forecast(prefix)
-        if _probability_quality(result) != quality:
+        actual = _probability_quality(result)
+        if actual is None or (result.get("model_source") == "public") != (initial.get("model_source") == "public"):
             return {"status": "unavailable", "choices": []}
+        qualities.add(actual)
+        sources.add(result.get("model_source"))
         return result
 
     result = lookahead(
@@ -450,12 +460,13 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
         return None
     rank_pairs = getattr(forecaster, "rank_pairs", None)
     if result["pairs"] and rank_pairs is not None:
-        alternatives = rank_pairs(**_forecast_context(plan, pos, pos.current), limit=3)
+        alternatives = rank_pairs(**_forecast_context(plan, pos, pos.current, forecaster), limit=3)
         if alternatives:
             result["ranked_pair_alternatives"] = alternatives
+    path_quality = "estimated" if "estimated" in qualities else "calibrated"
     return {
-        **result, "calibrated": quality == "calibrated", "probability_quality": quality,
-        "model_source": initial.get("model_source"),
+        **result, "calibrated": path_quality == "calibrated", "probability_quality": path_quality,
+        "model_source": "private_event" if "private_event" in sources else next(iter(sources), None),
         **({field: pin[field] for field in ("champion", "game", "player")} if pin else {}),
     }
 
@@ -479,6 +490,8 @@ def node_state(plan: dict, node_id: str, forecaster: Any = None, frequencies: An
             source = f"Historical {method} ranking · evidence through {result['as_of']}"
             if quality == "calibrated":
                 source += " · calibrated for named champion actions"
+            elif result.get("model_source") == "private_event" and quality == "estimated":
+                source = f"Tournament pick estimate · evidence through {result['as_of']}"
             elif quality == "estimated":
                 source = f"Open LCS draft estimate · training through {result['as_of']}"
             forecast = {
@@ -487,6 +500,8 @@ def node_state(plan: dict, node_id: str, forecaster: Any = None, frequencies: An
                 )
             }
             forecast["calibrated"] = quality == "calibrated"
+            if result.get("event_evidence"):
+                forecast["event_evidence"] = result["event_evidence"]
             if result.get("pick_calibration"):
                 forecast["pick_calibration"] = result["pick_calibration"]
             forecast["probability_quality"] = quality

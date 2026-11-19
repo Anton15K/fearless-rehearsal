@@ -48,7 +48,7 @@ export function MatchPrep({ bootstrap, plan, plans, busy, create, open }: {
           )) : <p className="muted">Your rehearsal plans will appear here.</p>}
         </div>
       </section>
-      {isNew ? <NewMatchForm patches={patches} busy={busy} create={create} /> :
+      {isNew ? <NewMatchForm events={bootstrap.events ?? []} patches={patches} busy={busy} create={create} /> :
         <SetupForm key={match.id} match={match} busy={busy} create={create} />}
     </div>
   )
@@ -100,7 +100,7 @@ function SetupForm({ match, busy, create }: { match: Match; busy: boolean; creat
 }
 
 
-function NewMatchForm({ patches, busy, create }: { patches: string[]; busy: boolean; create: (input: PlanInput) => void }) {
+function NewMatchForm({ events, patches, busy, create }: { events: string[]; patches: string[]; busy: boolean; create: (input: PlanInput) => void }) {
   const [left, setLeft] = useState('')
   const [right, setRight] = useState('')
   const teams: [string, string] = [left.trim(), right.trim()]
@@ -117,6 +117,7 @@ function NewMatchForm({ patches, busy, create }: { patches: string[]; busy: bool
     }))
     create({
       match_id: NEW_MATCHUP,
+      event: get('event') || undefined,
       teams,
       coach_team: teams[get('coach') === '1' ? 1 : 0],
       first: teams[get('first') === '1' ? 1 : 0],
@@ -143,6 +144,9 @@ function NewMatchForm({ patches, busy, create }: { patches: string[]; busy: bool
         <label className="field">Series format <select name="format" aria-label="Series format" defaultValue="Bo5"><option value="Bo3">Best of 3</option><option value="Bo5">Best of 5</option></select></label>
         <label className="field">Patch <select name="patch" aria-label="Patch" required defaultValue=""><option value="">Choose a patch</option>{patches.map(patch => <option key={patch}>{patch}</option>)}</select></label>
         <p className="match-date-help muted" id="matchup-date-help">Historical evidence ends before the as-of date.</p>
+        {events.length > 0 && <label className="field wide">Tournament <select name="event" defaultValue="">
+          <option value="">Use patch history</option>{events.map(name => <option key={name}>{name}</option>)}
+        </select></label>}
         <details className="matchup-rosters wide">
           <summary>Optional rosters</summary>
           <div className="form-grid">
