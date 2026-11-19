@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 from fearless.app_catalog import MatchCatalog
+from fearless.app_error import RehearsalError
 from fearless.rehearsal import (
-    RehearsalError,
     advance_history,
     apply_action,
     create_catalog_plan,
@@ -18,9 +18,9 @@ from fearless.rehearsal import (
 
 
 class BrowserRehearsal:
-    def __init__(self, catalog: MatchCatalog, forecaster=None):
+    def __init__(self, catalog: MatchCatalog, public_forecasts: dict | None = None):
         self.catalog = catalog
-        self.forecaster = forecaster
+        self.public_forecasts = public_forecasts or {}
 
     def request(self, path: str, body: str | None, stored: str) -> str:
         """Execute one request over the saved snapshots supplied by the IndexedDB transaction."""
@@ -52,7 +52,8 @@ class BrowserRehearsal:
             if not endpoint:
                 return {"data": public_plan(plan)}
             if len(endpoint) == 2 and endpoint[0] == "nodes":
-                return {"data": node_state(plan, endpoint[1], self.forecaster, self.catalog.frequencies)}
+                forecaster = self.public_forecasts.get(plan["match_id"])
+                return {"data": node_state(plan, endpoint[1], forecaster, self.catalog.frequencies)}
             raise RehearsalError(404, "Rehearsal endpoint not found.")
 
         match endpoint:
@@ -72,10 +73,10 @@ class BrowserRehearsal:
 def open_demo():
     assets = Path(__file__).with_name("assets")
     catalog = MatchCatalog(None, assets / "champions.json", assets / "public_games.jsonl")
-    predictor = None
+    forecasts = {}
     parameters = assets / "public_forecast.json"
     if parameters.is_file():
-        from fearless.public_model import PublicForecaster
+        from fearless.public_model import SHOWCASE_SERIES, PublicForecaster
 
-        predictor = PublicForecaster.load(parameters)
-    return BrowserRehearsal(catalog, predictor).request
+        forecasts[SHOWCASE_SERIES] = PublicForecaster.load(parameters)
+    return BrowserRehearsal(catalog, forecasts).request

@@ -5,7 +5,8 @@ from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
-from fearless.rehearsal import RehearsalError
+
+from fearless.app_error import RehearsalError
 
 
 class PlanStore:
