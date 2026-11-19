@@ -42,6 +42,8 @@ On 238 held-out pro games, the original private models put the actual next champ
 
 On the 98 games at Worlds 2026, the selected private model identified **30.92% of picks** and **31.33% of bans** in its top three. Modeling the opponent’s remaining comfort pool raised second-phase ban accuracy from **16.07% to 27.81%**. [Worlds comparison and private serving instructions](docs/challenger-evaluation.md#worlds-results-and-serving-decision)
 
+The private board also learns from earlier completed tournament series. On 383 previously unused MSI, LPL and LCP games, it raised next-pick top-three accuracy from **25.61% to 40.42%** and exact unordered-pair top-three accuracy from **5.31% to 11.84%**. [Tournament transfer test and serving instructions](docs/event-adaptation.md#confirmation-results)
+
 ## Project map
 
 | Source | Responsibility |
