@@ -93,7 +93,7 @@ def dated_games(games, frozen):
 def context(game, catalog):
     return dict(date=game["date"], patch=game["patch"], region=game["region"], first=game["first"],
                 second=game["second"], game_number=game["game_number"], locked=game["locked"],
-                pool=[c for c in catalog[game["patch"]] if c not in game["disabled"]], fearless=True)
+                pool=[c for c in dict.fromkeys(catalog[game["patch"]]) if c not in game["disabled"]], fearless=True)
 
 
 def distribution(forecaster, ctx, prefix):

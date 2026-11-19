@@ -68,6 +68,14 @@ class DraftForecaster:
         with gzip.open(directory / 'history.jsonl.gz', 'rt', encoding='utf8') as source:
             games = [json.loads(line) for line in source if line.strip()]
         catalog = ChampionCatalog.from_json(manifest['catalog'])
+        if catalog.patches:
+            published = json.loads((Path(__file__).with_name('assets') / 'champions.json').read_text())
+            # Supplement patch legality only when the trained champion vocabulary is unchanged.
+            known = set(catalog.names)
+            additions = {patch: names for patch, names in published.items()
+                         if patch not in catalog.patches and set(names) <= known}
+            if additions:
+                catalog = ChampionCatalog(catalog.releases, catalog.source, {**catalog.patches, **additions})
         return cls(catalog, games, models=models, serving=manifest['serving'])
 
     def _history(self, day):

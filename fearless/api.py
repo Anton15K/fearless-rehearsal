@@ -47,6 +47,7 @@ class Payload(BaseModel):
 class PlanInput(Payload):
     match_id: Identifier
     event: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)] | None = None
+    disabled: Annotated[list[Name], Field(max_length=30)] | None = None
     teams: Annotated[list[Name], Field(min_length=2, max_length=2)] | None = None
     coach_team: Name | None = None
     date: Annotated[str, StringConstraints(pattern=r"^\d{4}-\d{2}-\d{2}$")] | None = None

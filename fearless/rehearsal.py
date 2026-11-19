@@ -21,7 +21,7 @@ def create_catalog_plan(catalog: MatchCatalog, settings: dict) -> dict:
     if settings.get("match_id") == PROSPECTIVE_ID:
         match = catalog.prospective(settings)
     else:
-        if any(settings.get(field) is not None for field in ("teams", "coach_team", "date", "format", "event")):
+        if any(settings.get(field) is not None for field in ("teams", "coach_team", "date", "format", "event", "disabled")):
             raise RehearsalError(422, "Choose New matchup to set the teams and series details.")
         match = catalog.matches.get(settings.get("match_id"))
         if match is None:
@@ -30,6 +30,12 @@ def create_catalog_plan(catalog: MatchCatalog, settings: dict) -> dict:
     pool = catalog.pool(match, patch)
     if pool is None:
         raise RehearsalError(422, "The champion catalog does not include that patch.")
+    if settings.get("disabled"):
+        by_name = {c.casefold(): c for c in pool}
+        names = {name.casefold().strip() for name in settings["disabled"]}
+        if not names <= by_name.keys() or names == by_name.keys():
+            raise RehearsalError(422, "Choose disabled champions from this patch and leave champions available.")
+        pool = tuple(c for c in pool if c.casefold() not in names)
     return new_plan(match, pool, settings)
 
 

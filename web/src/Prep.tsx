@@ -118,6 +118,7 @@ function NewMatchForm({ events, patches, busy, create }: { events: string[]; pat
     create({
       match_id: NEW_MATCHUP,
       event: get('event') || undefined,
+      disabled: get('disabled') ? get('disabled').split(',').map(value => value.trim()).filter(Boolean) : undefined,
       teams,
       coach_team: teams[get('coach') === '1' ? 1 : 0],
       first: teams[get('first') === '1' ? 1 : 0],
@@ -147,6 +148,9 @@ function NewMatchForm({ events, patches, busy, create }: { events: string[]; pat
         {events.length > 0 && <label className="field wide">Tournament <select name="event" defaultValue="">
           <option value="">Use patch history</option>{events.map(name => <option key={name}>{name}</option>)}
         </select></label>}
+        {events.length > 0 && <label className="field wide">Disabled champions
+          <input name="disabled" placeholder="Optional, separated by commas" />
+        </label>}
         <details className="matchup-rosters wide">
           <summary>Optional rosters</summary>
           <div className="form-grid">

@@ -16,6 +16,7 @@ export type Match = {
 export type PlanInput = {
   match_id: string
   event?: string
+  disabled?: string[]
   teams?: [string, string]
   coach_team?: string
   date?: string
