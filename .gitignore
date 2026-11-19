@@ -31,3 +31,6 @@ catboost_info/
 /.idea/workspace.xml
 /.idea/shelf/
 /.idea/dataSources*
+/build/
+*.cbm
+history.jsonl.gz
