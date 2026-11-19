@@ -40,3 +40,5 @@ All commands share the prefix `python -m scripts.pair_shadow --ledger PRIVATE.sq
 | `score` | Reports pre-draft and live rankings separately with all eligible, missing, unverified, late, mismatched and cancelled windows. |
 
 The operator authenticates the upstream source before submitting observations. The ledger checks its registered identifier, UTC timestamp and consistency with the immutable forecast. No live conditional picks have been claimed for the November 20 pilot.
+
+The local collector checks for the Legends result from November 20 at 10:20 UTC and retries through November 23 at 10:20 UTC while the Mac is logged in and awake. A successful read saves the completed public draft privately and ends collection. Its status remains pending independent draft timing.
