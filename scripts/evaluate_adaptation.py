@@ -141,6 +141,27 @@ def verified_rows(path, audit, *, worlds=False):
     return rows, series
 
 
+STAGES = {"2026 Mid-Season Invitational": "MSI", "LCP/2026 Season/Split 3": "LCP",
+          "LPL/2026 Season/Split 3": "LPL", "LPL/2026 Season/Grand Finals": "LPL",
+          "LPL/2026 Season/Regional Finals": "LPL"}
+
+
+def verify_reservation(rows, games_path, lock):
+    if digest(games_path) != lock["sha256"]:
+        raise ValueError("Confirmation file differs from the preregistered cohort hash.")
+    if len(rows) != lock["games"] or len({g["series_id"] for g in rows}) != lock["series"]:
+        raise ValueError("Confirmation count differs from its locked cohort.")
+    observed, event_groups = set(), defaultdict(set)
+    for game in rows:
+        stage = game["game_id"].split("_", 1)[0]
+        if stage not in STAGES:
+            raise ValueError("Unexpected stage in confirmation.")
+        observed.add(stage)
+        event_groups[STAGES[stage]].add(game["event"])
+    if observed != set(STAGES) or any(len(events) != 1 for events in event_groups.values()) or len({g["event"] for g in rows}) != 3:
+        raise ValueError("Confirmation must preserve all five stages and three competition strata.")
+
+
 def pick_model(path, bundle):
     from fearless.patch_picks import PatchPickModel
 
@@ -180,12 +201,12 @@ def confirm(args, parent, catalog):
             or choice["artifacts"] != {"pick": digest(args.pick), "pair": digest(args.pair)}):
         raise ValueError("Recipes or parameter artifacts differ from development selection.")
     rows, series = verified_rows(args.games, args.audit)
-    if any(g["event"] == "Worlds 2026" for g in rows):
-        raise ValueError("The development event is in confirmation data.")
+    verify_reservation(rows, args.games, json.loads(args.lock.read_text()))
     recipe = choice["recipe"]
     model = EventForecaster(parent, rows, recipe=recipe, pick=pick_model(args.pick, args.bundle) if "fusion" in recipe else None,
                             pair=pair_model(args.pair, args.bundle))
-    picks, pairs, coverage = replay(parent, series, catalog, {"candidate": model}, pairs=True)
+    reference = EventForecaster(parent, rows, recipe="refresh")
+    picks, pairs, coverage = replay(parent, series, catalog, {"candidate": model, "refreshed_reference": reference}, pairs=True)
     if len(picks) != len(rows) * 10 or len(pairs) != len(rows) * 3:
         raise ValueError("Draft opportunity totals differ from the complete event schedule.")
     def summarize(ps, ds):
@@ -199,7 +220,8 @@ def confirm(args, parent, catalog):
               "pair": ci["pair_hit3"][0] > 0}
     report = {"recipe": recipe, "promoted": passed, "overall": scores, "by_event": by_event, "coverage": coverage,
               "intervals": ci, "games": len(rows), "series": len(series), "sha256": digest(args.games),
-              "selection_sha256": digest(args.selection), "unchanged_bans": 10*len(rows), "illegal_predictions": 0}
+              "selection_sha256": digest(args.selection), "lock_sha256": digest(args.lock),
+              "unchanged_bans": 10*len(rows), "illegal_predictions": 0}
     write_json(args.output, report)
     print(json.dumps(report, indent=2))
 
@@ -235,6 +257,8 @@ def main():
             cmd.add_argument("--" + arg, type=Path, required=arg not in ("pick", "pair") or name != "develop")
         if name in ("confirm", "package"):
             cmd.add_argument("--selection", type=Path, required=True)
+        if name == "confirm":
+            cmd.add_argument("--lock", type=Path, required=True)
         if name == "package":
             cmd.add_argument("--result", type=Path, required=True)
     args = parser.parse_args()
