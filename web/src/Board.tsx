@@ -9,7 +9,7 @@ import { ActionIcon, LockCount, Portrait } from './common'
 import { branchPath, kindLabel, nodeLabel, phaseLabel, slotGroups, visibleBranches } from './draft'
 import { matchFormat } from './Prep'
 import { OutlookPanel } from './OutlookPanel'
-import { probabilityLabel } from './outlook'
+import { isPublicEstimate, probabilityLabel } from './outlook'
 
 type BoardProps = {
   plan: Plan
@@ -256,7 +256,8 @@ function DecisionPanel({ state, team, busy, commit, advance, historical, custom,
   const [selected, setSelected] = useState(options[0]?.champion)
   const evidence = options.find(option => option.champion === selected)
   const nextHistorical = state.history
-  const showLikelihood = state.forecast?.calibrated === true
+  const publicEstimate = isPublicEstimate(state.forecast)
+  const showLikelihood = state.forecast?.calibrated === true || publicEstimate
   const verb = kindLabel(state.kind)
   return (
     <section className="panel decision-panel" aria-labelledby="decision-title">
@@ -283,7 +284,7 @@ function DecisionPanel({ state, team, busy, commit, advance, historical, custom,
                   <span className="suggestion-rank">{String(index + 1).padStart(2, '0')}</span>
                   <Portrait name={option.champion} size={34} />
                   <span className="suggestion-title"><strong>{option.champion}</strong>{option.roles?.length ? <small>{option.roles.join(' / ')}</small> : null}</span>
-                  {showLikelihood && option.score != null && <span className="suggestion-score" title="Likelihood conditional on a named champion action">{probabilityLabel(option.score)}</span>}
+                  {showLikelihood && option.score != null && <span className="suggestion-score" title={publicEstimate ? 'Public estimate conditional on a named champion action' : 'Likelihood conditional on a named champion action'}>{probabilityLabel(option.score)}</span>}
                   <ChevronRight size={15} />
                 </button>
               ))}

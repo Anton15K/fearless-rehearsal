@@ -14,11 +14,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from fearless.app_catalog import MatchCatalog
-from fearless.app_store import PlanStore, RehearsalError
+from fearless.app_error import RehearsalError
+from fearless.app_store import PlanStore
+from fearless.public_model import ARTIFACT_NAME, SHOWCASE_SERIES, PublicForecaster
 from fearless.rehearsal import (
     advance_history,
     apply_action,
-    new_plan,
+    create_catalog_plan,
     node_state,
     plan_summary,
     public_plan,
@@ -98,6 +100,16 @@ def _forecaster(bundle: Path | None) -> Any:
         return None
 
 
+def _public_forecaster(artifact: Path | None) -> PublicForecaster | None:
+    if artifact is None:
+        return None
+    try:
+        return PublicForecaster.load(artifact)
+    except (OSError, ValueError, KeyError):
+        LOGGER.warning("The bundled public draft forecast could not be loaded.")
+        return None
+
+
 def _browser_owner(request: Request, response: Response) -> str:
     response.headers["Cache-Control"] = "private, no-store"
     token = request.cookies.get(SESSION_COOKIE, "")
@@ -124,6 +136,7 @@ def create_app(
     database_path = _path(database, "FEARLESS_DB", Path(".local/rehearsal.sqlite3"))
     games_path = _path(games, "FEARLESS_GAMES")
     public_games = _bundled("public_games.jsonl")
+    public_artifact = _bundled(ARTIFACT_NAME)
     catalog_path = _path(catalog, "FEARLESS_CATALOG", _bundled("champions.json"))
     web_path = _path(web, "FEARLESS_WEB", Path("web/dist"))
     store = PlanStore(database_path)
@@ -134,6 +147,7 @@ def create_app(
         app.state.matches = MatchCatalog(games_path, catalog_path, public_games)
         bundle_path = _path(None, "FEARLESS_BUNDLE")
         app.state.forecaster = forecaster if forecaster is not None else _forecaster(bundle_path)
+        app.state.public_forecaster = _public_forecaster(public_artifact)
         yield
 
     app = FastAPI(title="Fearless Rehearsal", lifespan=lifespan)
@@ -152,15 +166,7 @@ def create_app(
 
     @app.post("/api/plans", status_code=201)
     def create_plan(payload: PlanInput, owner: Owner):
-        matches = app.state.matches
-        match = matches.matches.get(payload.match_id)
-        if match is None:
-            raise RehearsalError(404, "Match not found.")
-        patch = payload.patch or match.metadata["patch"]
-        pool = matches.pool(match, patch)
-        if pool is None:
-            raise RehearsalError(422, "The champion catalog does not include that patch.")
-        plan = new_plan(match, pool, payload.model_dump())
+        plan = create_catalog_plan(app.state.matches, payload.model_dump())
         store.create(owner, plan)
         return public_plan(plan)
 
@@ -170,9 +176,10 @@ def create_app(
 
     @app.get("/api/plans/{plan_id}/nodes/{node_id}")
     def get_node(plan_id: Identifier, node_id: Identifier, owner: Owner):
-        return node_state(
-            store.get(owner, plan_id), node_id, app.state.forecaster, app.state.matches.frequencies,
-        )
+        plan = store.get(owner, plan_id)
+        if plan["match_id"] == SHOWCASE_SERIES:
+            return node_state(plan, node_id, app.state.public_forecaster)
+        return node_state(plan, node_id, app.state.forecaster, app.state.matches.frequencies)
 
     @app.post("/api/plans/{plan_id}/actions")
     def add_action(plan_id: Identifier, payload: ActionInput, owner: Owner):
