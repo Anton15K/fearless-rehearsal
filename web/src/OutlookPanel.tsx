@@ -1,10 +1,11 @@
 import { ChevronDown, Telescope } from 'lucide-react'
 import { Portrait } from './common'
 import { kindLabel } from './draft'
-import { modeledOutlook, probabilityLabel, type Outlook } from './outlook'
+import { isPublicEstimate, modeledOutlook, probabilityLabel, type Outlook } from './outlook'
 
 export function OutlookPanel({ outlook, unavailable }: { outlook?: Outlook | null; unavailable: boolean }) {
   const forecast = modeledOutlook(outlook)
+  const publicEstimate = isPublicEstimate(forecast)
   const projection = forecast ?? (outlook?.status === 'scored' && outlook.paths.length ? outlook : null)
   if ((!outlook && !unavailable) || outlook?.status === 'complete') return null
 
@@ -21,9 +22,9 @@ export function OutlookPanel({ outlook, unavailable }: { outlook?: Outlook | nul
       ) : (
         <div className="outlook-body">
           {forecast ? <>
-            <p className="outlook-copy">Conditional on named champion choices. The outlook stops before your next decision.</p>
+            <p className="outlook-copy">{publicEstimate && 'Public estimate from earlier professional drafts. '}Conditional on named champion choices. The outlook stops before your next decision.</p>
             <div className="mass-key">
-              <span><i className="modeled-swatch" /> Modeled path mass {probabilityLabel(forecast.observed_mass)}</span>
+              <span><i className="modeled-swatch" /> {publicEstimate ? 'Estimated path mass' : 'Modeled path mass'} {probabilityLabel(forecast.observed_mass)}</span>
               <span><i className="residual-swatch" /> Residual {probabilityLabel(forecast.residual_mass)}</span>
             </div>
             <div className="mass-track" aria-hidden="true"><div style={{ width: `${forecast.observed_mass * 100}%` }} /></div>

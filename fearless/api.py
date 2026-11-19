@@ -14,12 +14,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from fearless.app_catalog import MatchCatalog
-from fearless.app_store import PlanStore, RehearsalError
+from fearless.app_error import RehearsalError
+from fearless.app_store import PlanStore
 from fearless.public_model import ARTIFACT_NAME, SHOWCASE_SERIES, PublicForecaster
 from fearless.rehearsal import (
     advance_history,
     apply_action,
-    new_plan,
+    create_catalog_plan,
     node_state,
     plan_summary,
     public_plan,
@@ -165,15 +166,7 @@ def create_app(
 
     @app.post("/api/plans", status_code=201)
     def create_plan(payload: PlanInput, owner: Owner):
-        matches = app.state.matches
-        match = matches.matches.get(payload.match_id)
-        if match is None:
-            raise RehearsalError(404, "Match not found.")
-        patch = payload.patch or match.metadata["patch"]
-        pool = matches.pool(match, patch)
-        if pool is None:
-            raise RehearsalError(422, "The champion catalog does not include that patch.")
-        plan = new_plan(match, pool, payload.model_dump())
+        plan = create_catalog_plan(app.state.matches, payload.model_dump())
         store.create(owner, plan)
         return public_plan(plan)
 

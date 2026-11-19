@@ -2,9 +2,10 @@
 
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
-from fearless.app_catalog import Match
-from fearless.app_store import RehearsalError, new_id
+from fearless.app_catalog import Match, MatchCatalog
+from fearless.app_error import RehearsalError
 from fearless.rules import (
     DRAFT_LENGTH,
     DraftAction,
@@ -14,6 +15,17 @@ from fearless.rules import (
     series_locks,
     validate_action,
 )
+
+
+def create_catalog_plan(catalog: MatchCatalog, settings: dict) -> dict:
+    match = catalog.matches.get(settings.get("match_id"))
+    if match is None:
+        raise RehearsalError(404, "Match not found.")
+    patch = settings.get("patch") or match.metadata["patch"]
+    pool = catalog.pool(match, patch)
+    if pool is None:
+        raise RehearsalError(422, "The champion catalog does not include that patch.")
+    return new_plan(match, pool, settings)
 
 
 def new_plan(match: Match, pool: tuple[str, ...], settings: dict) -> dict:
@@ -35,10 +47,10 @@ def new_plan(match: Match, pool: tuple[str, ...], settings: dict) -> dict:
         and patch == meta["patch"]
         and first == meta["first"]
     )
-    root = new_id()
+    root = uuid4().hex
     coach = match.coach_team
     plan = {
-        "id": new_id(),
+        "id": uuid4().hex,
         "match_id": meta["id"],
         "title": settings.get("title") or meta["title"],
         "teams": meta["teams"],
@@ -202,7 +214,7 @@ def apply_action(
             plan["selected_node"] = node["id"]
             return
 
-    node_id = new_id()
+    node_id = uuid4().hex
     plan["nodes"].append({
         "id": node_id, "parent_id": parent_id, "game": game, "first": order, "team": team,
         "kind": kind, "champion": champion, "origin": "historical" if historical else "rehearsal",
