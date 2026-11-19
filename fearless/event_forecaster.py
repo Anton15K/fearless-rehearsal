@@ -38,10 +38,12 @@ class EventForecaster:
         self._lock = Lock()
         self.updated = self._make_ranker() if "refresh" in recipe else None
 
+    def released_games(self, omit=None):
+        return [{**g, "finished_at": self.days[i] + "T23:59:59+00:00"}
+                for i, series in enumerate(self.series) if i != omit for g in series]
+
     def _make_ranker(self, omit=None):
-        extra = [{**g, "finished_at": self.days[i] + "T23:59:59+00:00"}
-                 for i, series in enumerate(self.series) if i != omit for g in series]
-        return DraftForecaster(self.catalog, [*self.frozen.games, *extra],
+        return DraftForecaster(self.catalog, [*self.frozen.games, *self.released_games(omit)],
                                models=self.frozen.models, serving=self.frozen.serving)
 
     @classmethod

@@ -170,6 +170,8 @@ def create_app(
         app.state.matches = MatchCatalog(games_path, catalog_path, public_games)
         bundle_path = _path(None, "FEARLESS_BUNDLE")
         app.state.forecaster = forecaster if forecaster is not None else _forecaster(bundle_path)
+        if getattr(app.state.forecaster, "accepts_event", False):
+            app.state.matches.teams.add(app.state.forecaster.released_games(), preferred=True)
         app.state.public_forecaster = _public_forecaster(public_artifact)
         yield
 

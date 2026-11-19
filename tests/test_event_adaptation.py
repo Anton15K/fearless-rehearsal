@@ -73,3 +73,23 @@ def test_series_bootstrap_resamples_within_each_event_without_changing_mix():
             for e, sid, a, b in [("east", "1", 1, 0), ("west", "2", 0, 1), ("west", "3", 0, 1)]]
     assert intervals(rows, 0) == pytest.approx([-1/3, -1/3])
     assert intervals(rows[::-1], 0) == intervals(rows, 0)
+
+
+def test_attached_player_evidence_matches_both_revealed_drafts_and_uses_only_earlier_ids(rows):
+    from scripts.event_rosters import attach
+    from fearless.model_features import ROLES
+    g = rows[0]
+    catalog = ChampionCatalog.from_json({"16.20": CHAMPIONS})
+    players = []
+    for team in ("home", "away"):
+        champs = [a["champion"] for a in g["actions"] if a["kind"] == "pick" and a["team"] == team]
+        for role, champ in zip(ROLES, champs):
+            players.append(dict(Team=team.upper(), Role=role.title(), Champion=champ, Link=team+role, Name=team+role))
+    known = {("home", "hometop"): {"same-day": g["date"], "previous": "2026-10-13"}}
+    enriched = attach(g, players, catalog, known)
+    assert enriched["team_names"] == {"home": "HOME", "away": "AWAY"}
+    assert enriched["rosters"]["home"][0]["player"] == "previous"
+    assert enriched["rosters"]["away"][0]["player"] == "leaguepedia:player:awaytop"
+    assert attach(g, players[:-1], catalog, known) is g
+    players[0]["Champion"] = players[-1]["Champion"]
+    assert attach(g, players, catalog, known) is g
