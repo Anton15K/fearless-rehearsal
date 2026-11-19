@@ -30,16 +30,18 @@ def create_catalog_plan(catalog: MatchCatalog, settings: dict) -> dict:
     pool = catalog.pool(match, patch)
     if pool is None:
         raise RehearsalError(422, "The champion catalog does not include that patch.")
+    disabled = ()
     if settings.get("disabled"):
         by_name = {c.casefold(): c for c in pool}
         names = {name.casefold().strip() for name in settings["disabled"]}
         if not names <= by_name.keys() or names == by_name.keys():
             raise RehearsalError(422, "Choose disabled champions from this patch and leave champions available.")
+        disabled = tuple(by_name[name] for name in sorted(names))
         pool = tuple(c for c in pool if c.casefold() not in names)
-    return new_plan(match, pool, settings)
+    return new_plan(match, pool, settings, disabled=disabled)
 
 
-def new_plan(match: Match, pool: tuple[str, ...], settings: dict) -> dict:
+def new_plan(match: Match, pool: tuple[str, ...], settings: dict, *, disabled: tuple[str, ...] = ()) -> dict:
     meta = match.metadata
     patch = settings.get("patch") or meta["patch"]
     first = settings.get("first") or meta["first"]
@@ -64,6 +66,7 @@ def new_plan(match: Match, pool: tuple[str, ...], settings: dict) -> dict:
         "id": uuid4().hex,
         "match_id": meta["id"],
         "event": meta.get("event"),
+        "disabled": list(disabled),
         "title": settings.get("title") or meta["title"],
         "teams": meta["teams"],
         "patch": patch,
@@ -334,6 +337,8 @@ def public_plan(plan: dict) -> dict:
             "date", "format", "root_id", "selected_node", "priority", "target_game", "player",
             "rosters", "brief",
         )},
+        "event": plan.get("event"),
+        "disabled": plan.get("disabled", []),
         "provenance": plan.get("provenance"),
         "team_history": plan.get("team_history"),
         "coach_team": plan["coach_team"],

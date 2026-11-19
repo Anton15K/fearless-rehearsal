@@ -190,6 +190,7 @@ function App() {
             {(historical || scenario === 'illustrative') && <span className={`source-label ${historical ? 'source-historical' : ''}`}><Radio size={12} /> {historical ? (current?.history ? 'Historical replay' : 'Historical match · Rehearsal') : 'Illustrative scenario'}</span>}
             {prospective && plan.coach_team && <span className="prospective-coach">Your team · {plan.coach_team}</span>}
             <strong>{match?.title || plan.title}</strong>
+            {plan.event && <span className="match-event">{plan.event}</span>}
             <div className="context-meta">{context.map(item => <span key={item}>{item}</span>)}</div>
             {prospective && teamsWithoutHistory.length > 0 && <p className="prospective-coverage">Limited team evidence for {teamsWithoutHistory.join(' and ')}</p>}
           </div>}

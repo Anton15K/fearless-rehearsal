@@ -65,6 +65,8 @@ export type Plan = PlanSummary & {
   teams: string[]
   patch: string
   date: string
+  event?: string | null
+  disabled?: string[]
   root_id: string
   selected_node: string
   nodes: DraftNode[]
