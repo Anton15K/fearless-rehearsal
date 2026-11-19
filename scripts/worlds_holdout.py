@@ -70,7 +70,7 @@ def identities(archive):
     return {name: next(iter(keys)) for name, keys in names.items() if len(keys) == 1}
 
 
-def parse_series(metadata, games, draft_by_id, schedule_by_id, patch_map, known):
+def parse_series(metadata, games, draft_by_id, schedule_by_id, patch_map, known, *, earliest=CUTOFF, region="International"):
     games = sorted(games, key=lambda row: int(row["number"]))
     size = len(games)
     wins = [int(metadata[key]) for key in ("Team1Score", "Team2Score")]
@@ -88,7 +88,7 @@ def parse_series(metadata, games, draft_by_id, schedule_by_id, patch_map, known)
         if minutes < 0 or not 0 <= seconds < 60 or minutes + seconds == 0:
             raise ValueError("invalid game duration")
         completion = start + timedelta(minutes=minutes, seconds=seconds)
-        if day < CUTOFF:
+        if day < earliest:
             raise ValueError("date overlaps archive")
         draft, selection = draft_by_id[key], schedule_by_id[key]
         names = [draft["Team1"], draft["Team2"]]
@@ -121,7 +121,7 @@ def parse_series(metadata, games, draft_by_id, schedule_by_id, patch_map, known)
             actions.append(action)
         result.append(dict(series_id=game["MatchId"], game_id=key, game_number=int(game["number"]), series_games=size,
                            date=day, drafted_at=start.isoformat(), finished_at=completion.isoformat(),
-                           patch=patch, region="International", first=first, second=second,
+                           patch=patch, region=region, first=first, second=second,
                            actions=actions, locked=sorted(locks), disabled=sorted(disabled),
                            fearless=True, eligible=True, finished=True))
         previous.append(actions)
