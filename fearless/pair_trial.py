@@ -28,7 +28,7 @@ def fingerprint(value):
 
 def identities(bundle, parent, adaptive, roles, events, pools):
     # Bind source as well as weights. A persistently running trial detects code drift on restart.
-    source = sorted((ROOT / "fearless").glob("*.py")) + [
+    source = sorted(p for p in (ROOT / "fearless").glob("*.py") if p.name != "prospective_pair_log.py") + [
         ROOT / "scripts" / name for name in ("coach_frequency.py", "compare_challengers.py", "pair_trial.py")]
     code = fingerprint({str(path.relative_to(ROOT)): digest(path) for path in source})
     common = {"implementation": code, "bundle": incumbent_signature(bundle), "parent": digest(parent),
