@@ -50,6 +50,7 @@ class ModelTest(unittest.TestCase):
         self.assertEqual(result['legal_candidates'], 14)
         choice = next(row for row in result['choices'] if row['champion'] == 'Champion 06')
         self.assertTrue(any('historical player' in line for line in choice['evidence']))
+        self.assertIn('Historical role observations: 1', choice['evidence'])
         self.assertEqual((choice['games'], choice['roles']), (1, ['top']))
         self.assertAlmostEqual(sum(row['probability'] for row in result['choices']), 1)
 

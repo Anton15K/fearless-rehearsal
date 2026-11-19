@@ -128,7 +128,7 @@ class DraftForecaster:
             if player_count:
                 evidence.append(f'{side} historical player picks: {player_count}')
             if role_count:
-                evidence.append(f'Verified role observations: {role_count}')
+                evidence.append(f'Historical role observations: {role_count}')
             pair_count = int(values['ally_pick_pair_support'] + values['enemy_pick_pair_support'])
             if pair_count:
                 evidence.append(f'Historical continuations after current picks: {pair_count}')
