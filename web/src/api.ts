@@ -93,11 +93,16 @@ export type NodeState = {
   source: string
   completed?: boolean
   outlook?: Outlook | null
-  forecast?: { calibrated?: boolean; method?: string; as_of?: string } | null
+  forecast?: { calibrated?: boolean; method?: string; as_of?: string; probability_quality?: string } | null
   history?: { team?: string; kind?: string; champion?: string | null; next?: Action | null } | null
 }
 
 async function request<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
+  if (import.meta.env.MODE === 'demo') {
+    const { requestDemo } = await import('./demo')
+    return requestDemo<T>(path, data, signal)
+  }
+
   const response = await fetch(`/api${path}`, {
     method: data === undefined ? 'GET' : 'POST',
     headers: data === undefined ? undefined : { 'Content-Type': 'application/json' },

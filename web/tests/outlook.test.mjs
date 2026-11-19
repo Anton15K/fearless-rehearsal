@@ -33,3 +33,10 @@ test('withholds probability labels for rules-only or illustrative outputs', () =
   assert.equal(modeledOutlook({ ...projection, method: null, conditional: 'rules_only' }), null)
   assert.equal(modeledOutlook({ ...projection, status: 'awaiting_coach' }), null)
 })
+
+test('shows public estimates only for the declared independently fitted predictor', () => {
+  const estimate = { ...projection, calibrated: false, probability_quality: 'estimated' }
+  assert.equal(modeledOutlook({ ...estimate, method: 'public_frequencies' }).observed_mass, 0.45)
+  assert.equal(modeledOutlook({ ...estimate, method: 'frequency' }), null)
+  assert.equal(modeledOutlook({ ...estimate, method: 'public_frequencies', probability_quality: undefined }), null)
+})

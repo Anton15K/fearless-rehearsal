@@ -5,18 +5,7 @@ from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
-from uuid import uuid4
-
-
-class RehearsalError(Exception):
-    def __init__(self, status: int, detail: str):
-        super().__init__(detail)
-        self.status = status
-        self.detail = detail
-
-
-def new_id() -> str:
-    return uuid4().hex
+from fearless.rehearsal import RehearsalError
 
 
 class PlanStore:

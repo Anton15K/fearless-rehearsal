@@ -7,11 +7,12 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test": "node --test tests/*.test.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:demo": "tsc --noEmit && vite build --mode demo && node scripts/copy-demo.mjs"
   },
   "dependencies": {
-    "@fontsource/barlow-condensed": "^5.2.8",
     "@fontsource-variable/ibm-plex-sans": "^5.2.8",
+    "@fontsource/barlow-condensed": "^5.2.8",
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
@@ -22,6 +23,8 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.4.1",
+    "playwright": "1.65.1",
+    "pyodide": "0.28.3",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
   }

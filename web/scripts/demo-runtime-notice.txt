@@ -1,0 +1,8 @@
+This browser demo includes unmodified Pyodide 0.28.3 runtime files from npm.
+
+Pyodide is licensed under the Mozilla Public License 2.0.
+Source for this release: https://github.com/pyodide/pyodide/tree/0.28.3
+License: https://github.com/pyodide/pyodide/blob/0.28.3/LICENSE
+
+The runtime includes CPython and its standard library under the Python Software
+Foundation license: https://docs.python.org/3.13/license.html
