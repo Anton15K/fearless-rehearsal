@@ -44,8 +44,19 @@ def whole_games(path, frozen):
     if not games or min(g["date"] for g in games) <= max(map(evidence_date, frozen.games)):
         raise ValueError("Confirmation games must be newer than the frozen history.")
     dates = defaultdict(list)
+    members = defaultdict(list)
     for g in games:
-        dates[g["series_id"]].append(g["date"])
+        if not g.get("eligible") or not g.get("finished"):
+            raise ValueError("Confirmation requires eligible, finished games.")
+        if not g.get("finished_at"):
+            raise ValueError("A verified completion date is required for every confirmation game.")
+        dates[g["series_id"]].extend([g["date"], evidence_date(g)])
+        members[g["series_id"]].append(g)
+    for group in members.values():
+        if ({g.get("series_games") for g in group} != {len(group)}
+                or sorted(g["game_number"] for g in group) != list(range(1, len(group) + 1))
+                or len({g["game_id"] for g in group}) != len(group)):
+            raise ValueError("Incomplete series in confirmation data.")
     if any(min(days) <= REFRESH_THROUGH < max(days) for days in dates.values()):
         raise ValueError("Series spanning the refresh cutoff cannot be split.")
     return games
@@ -89,7 +100,10 @@ def refresh(args):
     frozen = DraftForecaster.load(args.bundle)
     games = whole_games(args.games, frozen)
     fit_games = [g for g in games if g["date"] <= REFRESH_THROUGH]
-    end = {g["series_id"]: g["date"] for g in fit_games}
+    end = {}
+    for game in fit_games:
+        sid = game["series_id"]
+        end[sid] = max(end.get(sid, ""), evidence_date(game))
     catalog = json_file(args.catalog)
     def picks():
         for game in dated_games(fit_games, frozen):
@@ -116,16 +130,17 @@ def pick_pairs(forecaster, ctx, prefix):
                 raise ValueError("Illegal or duplicate pair alternative.")
             return output
     actor, _ = schedule(ctx["first"], ctx["second"])[len(prefix)]
+    fallback = getattr(forecaster, "frozen", forecaster)
     result = lookahead(pool=ctx["pool"], locked=ctx["locked"], current=prefix, first=ctx["first"],
                        second=ctx["second"], coach_team=ctx["second"] if ctx["first"] == actor else ctx["first"],
-                       forecast=lambda p: forecaster.forecast(**ctx, current=p, limit=3))
+                       forecast=lambda p: fallback.forecast(**ctx, current=p, limit=3))
     if not result["pairs"]:
         raise ValueError("Expected a double-pick opportunity.")
     return [tuple(x["champions"]) for x in result["pairs"][:3]]
 
 
 def ci(series_values):
-    totals = np.array([(len(turns), fsum(turns)) for turns in series_values.values()])
+    totals = np.array([(len(series_values[key]), fsum(series_values[key])) for key in sorted(series_values)])
     rng = np.random.default_rng(BOOTSTRAP_SEED)
     sums = totals[rng.integers(0, len(totals), size=(5000, len(totals)))].sum(axis=1)
     return np.quantile(sums[:, 1] / sums[:, 0], [.025, .975]).tolist()
@@ -156,6 +171,7 @@ def score(args):
     games = whole_games(args.games, old)
     catalog = json_file(args.catalog)
     rows = defaultdict(list)
+    all_turns = defaultdict(list)
     calibration_counts = Counter()
     for game in dated_games(games, old):
         ctx = context(game, catalog)
@@ -169,13 +185,14 @@ def score(args):
                 a = pick_pairs(old, ctx, prefix)
                 b = pick_pairs(candidate, ctx, prefix)
                 rows["pair"].append((sid, (int(pair in a),), (int(pair in b),)))
-            if not target:
-                continue
             left, _ = distribution(old, ctx, prefix)
             right, meta = distribution(candidate, ctx, prefix)
+            if kind == "ban" and i < 12 and left != right:
+                raise ValueError("Opening ban forecast changed.")
+            if not target:
+                continue
+            all_turns[kind].append((int(target in list(left)[:3]), int(target in list(right)[:3])))
             if kind == "ban" and i < 12:
-                if left != right:
-                    raise ValueError("Opening ban forecast changed.")
                 continue
             if kind == "pick":
                 if list(left) != list(right):
@@ -193,6 +210,8 @@ def score(args):
                  "ban": bans["hit3_delta_ci95"][0] > 0 and bans["candidate"]["nll"] <= bans["incumbent"]["nll"],
                  "calibration": picks["nll_delta_ci95"][1] < 0 and picks["candidate"]["ece"] <= picks["incumbent"]["ece"]}
     report = dict(results=results, directions_passed=decisions, calibration_coverage=dict(calibration_counts),
+                  cohort_hit3={kind: {"turns": len(turns), "incumbent_hits": sum(a for a, _ in turns),
+                                      "candidate_hits": sum(b for _, b in turns)} for kind, turns in all_turns.items()},
                   games=len(games), series=len({g["series_id"] for g in games}), opening_bans_unchanged=True,
                   pick_order_unchanged=True, illegal_suggestions=0,
                   incumbent=incumbent_signature(args.bundle), cohort_sha256=sha256(args.games.read_bytes()).hexdigest())

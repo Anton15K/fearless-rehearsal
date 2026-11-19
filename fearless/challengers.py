@@ -32,11 +32,13 @@ class DraftChallengers:
 
         policy = Path(policy)
         settings = json.loads(policy.read_text())
-        if settings.get("version") != 1 or settings.get("incumbent") != incumbent_signature(bundle):
+        if not isinstance(settings, dict) or settings.get("version") != 1 or settings.get("incumbent") != incumbent_signature(bundle):
             raise ValueError("Challenger policy is incompatible with the configured incumbent bundle.")
         components = settings["components"]
         if not isinstance(components, dict) or set(components) - {"ban", "pair", "calibration"}:
             raise ValueError("Unknown challenger components.")
+        if any(not isinstance(path, str) or not path.strip() for path in components.values()):
+            raise ValueError("Every enabled component must have an artifact path.")
         paths = {name: policy.parent / value for name, value in components.items()}
         ban = None
         if "ban" in paths:

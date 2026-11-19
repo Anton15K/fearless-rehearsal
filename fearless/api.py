@@ -104,7 +104,8 @@ def _forecaster(bundle: Path | None) -> Any:
 
             try:
                 return DraftChallengers.load(bundle, policy)
-            except (OSError, ValueError, KeyError):
+            except Exception:
+                # Optional sidecars include third-party binary loaders with their own exceptions.
                 LOGGER.exception("Failed to load challenger policy. Serving the frozen draft bundle.")
         return DraftForecaster.load(bundle)
     except (ImportError, OSError, ValueError, KeyError):

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -19,6 +20,7 @@ CUTOFF = "2026-10-14"
 ALIASES = {"Cloud9": "Cloud9 Kia", "Gen.G": "Gen.G Esports", "LYON (2024 American Team)": "LYON"}
 TABLES = {
     "score": ("ScoreboardGames", "GameId,MatchId,Team1,Team2,Patch,N_GameInMatch=number,DateTime_UTC=start"),
+    "duration": ("ScoreboardGames", "GameId,Gamelength=duration"),
     "schedule": ("MatchScheduleGame", "GameId,Blue,Red,FirstPick"),
     "draft": ("PicksAndBansS7", "GameId,Team1,Team2,IsComplete,IsFilled," + ",".join(
         f"Team{team}{kind}{n}" for team in (1, 2) for kind in ("Ban", "Pick") for n in range(1, 6))),
@@ -78,8 +80,14 @@ def parse_series(metadata, games, draft_by_id, schedule_by_id, patch_map, known)
         raise ValueError("noncontiguous game numbers")
     catalog = ChampionCatalog.from_json(patch_map)
     previous, result = [], []
+    participants = None
     for game in games:
         key, day = game["GameId"], game["start"][:10]
+        start = datetime.fromisoformat(game["start"]).replace(tzinfo=timezone.utc)
+        minutes, seconds = map(int, (game.get("duration") or "").split(":"))
+        if minutes < 0 or not 0 <= seconds < 60 or minutes + seconds == 0:
+            raise ValueError("invalid game duration")
+        completion = start + timedelta(minutes=minutes, seconds=seconds)
         if day < CUTOFF:
             raise ValueError("date overlaps archive")
         draft, selection = draft_by_id[key], schedule_by_id[key]
@@ -96,6 +104,9 @@ def parse_series(metadata, games, draft_by_id, schedule_by_id, patch_map, known)
             raise ValueError("unrecognized disabled champion")
         pool = [name for name in patch_map[patch] if name not in disabled]
         first, second = [known.get(ALIASES.get(n, n).casefold(), "leaguepedia:" + n) for n in names]
+        if first == second or participants is not None and {first, second} != participants:
+            raise ValueError("inconsistent series participants")
+        participants = {first, second}
         locks = series_locks(previous)
         position, actions = Counter(), []
         for team, kind in schedule(first, second):
@@ -108,8 +119,9 @@ def parse_series(metadata, games, draft_by_id, schedule_by_id, patch_map, known)
             action = dict(team=team, kind=kind, champion=champion)
             validate_action(pool, locks, actions, first, second, **action)
             actions.append(action)
-        result.append(dict(series_id=game["MatchId"], game_id=key, game_number=int(game["number"]),
-                           date=day, patch=patch, region="International", first=first, second=second,
+        result.append(dict(series_id=game["MatchId"], game_id=key, game_number=int(game["number"]), series_games=size,
+                           date=day, drafted_at=start.isoformat(), finished_at=completion.isoformat(),
+                           patch=patch, region="International", first=first, second=second,
                            actions=actions, locked=sorted(locks), disabled=sorted(disabled),
                            fearless=True, eligible=True, finished=True))
         previous.append(actions)
@@ -139,8 +151,9 @@ def main():
             raw = args.cache / (stage.replace(" ", "-") + "-" + key + ".json")
             hashes[raw.name] = sha256(raw.read_bytes()).hexdigest()
         games = defaultdict(list)
+        durations = keyed(tables["duration"], "GameId")
         for game in tables["score"]:
-            games[game["MatchId"]].append(game)
+            games[game["MatchId"]].append({**game, "duration": durations.get(game["GameId"], {}).get("duration", "")})
         total += len(tables["score"])
         series_count += len(tables["series"])
         drafts, selections = keyed(tables["draft"], "GameId"), keyed(tables["schedule"], "GameId")
