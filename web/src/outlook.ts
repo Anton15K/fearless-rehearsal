@@ -14,11 +14,12 @@ export type Outlook = {
   observed_mass: number
   residual_mass: number
   outcomes: { status: string; probability: number; branches: number }[]
+  ranked_pair_alternatives?: { champions: string[]; evidence?: string[] }[]
   pairs: { champions: string[]; probability: number }[]
   paths: { actions: Action[]; probability: number; pin_status?: string | null }[]
 }
 
-const statisticalMethods = new Set(['baseline', 'blend', 'learned', 'learned_meta_only', 'learned_joint', 'mixed'])
+const statisticalMethods = new Set(['baseline', 'blend', 'learned', 'learned_meta_only', 'learned_joint', 'second_phase_ban_challenger', 'mixed'])
 
 export function isPublicEstimate(forecast?: { method?: string | null; probability_quality?: string } | null) {
   return forecast?.method === 'public_frequencies' && forecast.probability_quality === 'estimated'

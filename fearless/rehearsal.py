@@ -381,14 +381,18 @@ def _public_roster_evidence(plan: dict, result: dict) -> dict:
     return public
 
 
-def forecast_at(plan: dict, pos: Position, forecaster: Any, prefix: list[DraftAction], limit: int) -> dict:
+def _forecast_context(plan: dict, pos: Position, prefix: list[DraftAction]) -> dict:
     ids = plan["team_ids"]
     current = [{**action, "team": ids[action["team"]]} for action in prefix]
-    return forecaster.forecast(
+    return dict(
         date=plan["date"], patch=plan["patch"], region=plan["region"],
         first=ids[pos.first], second=ids[pos.second], game_number=pos.game, current=current,
-        locked=sorted(pos.locked), pool=plan["pool"], rosters=_model_rosters(plan), limit=limit,
+        locked=sorted(pos.locked), pool=plan["pool"], rosters=_model_rosters(plan),
     )
+
+
+def forecast_at(plan: dict, pos: Position, forecaster: Any, prefix: list[DraftAction], limit: int) -> dict:
+    return forecaster.forecast(**_forecast_context(plan, pos, prefix), limit=limit)
 
 
 def _probability_quality(result: dict) -> str | None:
@@ -440,6 +444,11 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
     )
     if result["status"] != "scored":
         return None
+    rank_pairs = getattr(forecaster, "rank_pairs", None)
+    if result["pairs"] and rank_pairs is not None:
+        alternatives = rank_pairs(**_forecast_context(plan, pos, pos.current), limit=3)
+        if alternatives:
+            result["ranked_pair_alternatives"] = alternatives
     return {
         **result, "calibrated": quality == "calibrated", "probability_quality": quality,
         "model_source": initial.get("model_source"),
