@@ -87,6 +87,7 @@ def _panels(matrix, pool):
 
 def make_envelope(fixture, trial, pools, freeze_sha256, *, clock=utc_now):
     deadline = _fixture(fixture)
+    code_hash = digest(Path(__file__))
     started = clock()
     if started >= deadline or started.date().isoformat() > fixture["date"]:
         raise ValueError("The pilot must start before the registered draft deadline.")
@@ -103,8 +104,10 @@ def make_envelope(fixture, trial, pools, freeze_sha256, *, clock=utc_now):
     sealed = clock()
     if not started <= sealed < deadline:
         raise ValueError("Scenario generation exceeded the registered draft deadline.")
+    if digest(Path(__file__)) != code_hash:
+        raise ValueError("The pilot wrapper changed during forecast generation.")
     return {"version": 1, "scope": "pilot", "fixture": fixture, "freeze_sha256": freeze_sha256,
-            "started_at": started.isoformat(), "sealed_at": sealed.isoformat(), "evidence_date": evidence_date,
+            "pilot_code_sha256": code_hash, "started_at": started.isoformat(), "sealed_at": sealed.isoformat(), "evidence_date": evidence_date,
             "simulations_per_scenario": SIMULATIONS, "seed": SEED, "scenarios": scenarios}
 
 
@@ -134,6 +137,8 @@ def read_verified_seal(path, public_sha256, fixture_id):
     envelope = read(path)
     if envelope.get("version") != 1 or envelope.get("scope") != "pilot" or envelope.get("fixture", {}).get("fixture_id") != fixture_id:
         raise ValueError("The public fixture ID does not match a version 1 pilot seal.")
+    if envelope.get("pilot_code_sha256") != digest(Path(__file__)):
+        raise ValueError("The pilot wrapper differs from the sealed implementation.")
     return envelope
 
 

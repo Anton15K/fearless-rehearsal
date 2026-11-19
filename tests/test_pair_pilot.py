@@ -79,6 +79,10 @@ def test_atomic_first_write_and_independent_public_hash(fixture, trial, tmp_path
         read_verified_seal(output, "0" * 64, fixture["fixture_id"])
     with pytest.raises(ValueError, match="fixture"):
         read_verified_seal(output, recorded, "different")
+    other = tmp_path / "incompatible.json"
+    write_exclusive(other, {**envelope, "pilot_code_sha256": "0" * 64})
+    with pytest.raises(ValueError, match="pilot wrapper"):
+        read_verified_seal(other, digest(other), fixture["fixture_id"])
 
 
 def test_selects_exactly_one_canonical_order_and_scores_three_panels(fixture, trial):
