@@ -1,0 +1,18 @@
+{
+  "audit_sha256": "d0295ce5151398efa9e6429f98cff99241f6cd9261286b22b7050073da4762a2",
+  "events": {
+    "LCK 2026 Postseason": 55,
+    "LCK CL 2026 Postseason": 46
+  },
+  "freeze_sha256": "6807bd977a799e4836941c6985409602af2150f25ea95c2b74a976c3d7f6b263",
+  "games": 101,
+  "games_sha256": "6215b473b79425f87c5da1ed6c904a7936e25141318e5a65cfadd657577ed7d2",
+  "models": {
+    "adaptive": "2452134c109f079e14b1b406d353349ba95ff7a12e94237acbd1a97f63bddfa5",
+    "frequency": "5faa3d9d195f5648708fb9b8eb04a3db2534075f9a64a312e613a776bacd641f",
+    "role_first": "d34b2d21861f15c5c046be284c596853b699f11e3fb0831daf2d70370f0bb59a"
+  },
+  "series": 25,
+  "source_catalog_sha256": "62571310dfa62c98af28a4a71eead18614240d8dd73bc38ef222d4b3006fe18a",
+  "verified_roles": 101
+}
