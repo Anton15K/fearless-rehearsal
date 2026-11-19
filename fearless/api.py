@@ -6,14 +6,14 @@ import os
 from pathlib import Path
 import re
 from secrets import token_urlsafe
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from fearless.app_catalog import MatchCatalog
+from fearless.app_catalog import MatchCatalog, PROSPECTIVE_ID
 from fearless.app_error import RehearsalError
 from fearless.app_store import PlanStore
 from fearless.public_model import ARTIFACT_NAME, SHOWCASE_SERIES, PublicForecaster
@@ -46,6 +46,10 @@ class Payload(BaseModel):
 
 class PlanInput(Payload):
     match_id: Identifier
+    teams: Annotated[list[Name], Field(min_length=2, max_length=2)] | None = None
+    coach_team: Name | None = None
+    date: Annotated[str, StringConstraints(pattern=r"^\d{4}-\d{2}-\d{2}$")] | None = None
+    format: Literal["Bo3", "Bo5"] | None = None
     title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)] | None = None
     priority: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)] | None = None
     target_game: Game | None = None
@@ -179,7 +183,10 @@ def create_app(
         plan = store.get(owner, plan_id)
         if plan["match_id"] == SHOWCASE_SERIES:
             return node_state(plan, node_id, app.state.public_forecaster)
-        return node_state(plan, node_id, app.state.forecaster, app.state.matches.frequencies)
+        forecaster = app.state.forecaster
+        if forecaster is None and plan["match_id"] == PROSPECTIVE_ID:
+            forecaster = app.state.public_forecaster
+        return node_state(plan, node_id, forecaster, app.state.matches.frequencies)
 
     @app.post("/api/plans/{plan_id}/actions")
     def add_action(plan_id: Identifier, payload: ActionInput, owner: Owner):

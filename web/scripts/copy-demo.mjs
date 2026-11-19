@@ -14,6 +14,7 @@ const runtimeFiles = [
 const sourceFiles = [
   'fearless/__init__.py',
   'fearless/app_catalog.py',
+  'fearless/app_directory.py',
   'fearless/app_error.py',
   'fearless/app_forecast.py',
   'fearless/browser.py',
@@ -23,8 +24,6 @@ const sourceFiles = [
   'fearless/assets/champions.json',
   'fearless/assets/public_games.jsonl',
 ]
-const teamDirectory = 'fearless/app_directory.py'
-if (existsSync(join(project, teamDirectory))) sourceFiles.push(teamDirectory)
 const publicForecast = 'fearless/assets/public_forecast.json'
 if (existsSync(join(project, publicForecast))) {
   sourceFiles.push('fearless/public_model.py', publicForecast)

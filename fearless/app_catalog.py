@@ -6,11 +6,14 @@ from datetime import date
 import json
 from pathlib import Path
 
+from fearless.app_directory import TeamDirectory, team_key
 from fearless.app_forecast import HistoricalFrequencies
+from fearless.app_error import RehearsalError
 from fearless.rules import DRAFT_LENGTH, DraftAction, schedule, series_locks, validate_action
 
 
 DEMO_ID = "poppy-game-three"
+PROSPECTIVE_ID = "prospective"
 HISTORICAL_SERIES = {"3000378": "Bo5", "994442840205359781": "Bo3"}
 DEMO_PATCH = "16.17"
 DEMO_TEAMS = ("Cloud9 Kia", "LYON")
@@ -171,6 +174,7 @@ class MatchCatalog:
         }
         self.matches = {DEMO_ID: _demo()}
         history = []
+        self.teams = TeamDirectory()
         for path in dict.fromkeys((games, public_games)):
             if path is None:
                 continue
@@ -179,16 +183,68 @@ class MatchCatalog:
             self.matches.update({
                 match.metadata["id"]: match for match in _series_matches(rows, self.patches)
             })
+            self.teams.add(rows, preferred=path == games)
             history.extend(rows)
         self.frequencies = HistoricalFrequencies(history)
 
     def pool(self, match: Match, patch: str) -> tuple[str, ...] | None:
+        if match.metadata["source"] == PROSPECTIVE_ID:
+            return self.patches.get(patch) or (DEMO_POOL if patch == DEMO_PATCH else None)
         if patch == DEMO_PATCH and match.metadata["source"] == "illustrative":
             return DEMO_POOL
         pool = self.patches.get(patch)
         if pool is None and patch == match.metadata["patch"]:
             return DEMO_POOL
         return pool
+
+    def prospective(self, settings: dict) -> Match:
+        submitted = settings.get("teams")
+        if not isinstance(submitted, list) or len(submitted) != 2 or any(
+            not isinstance(name, str) or not name.strip() or len(name.strip()) > 80 for name in submitted
+        ):
+            raise RehearsalError(422, "Enter two team names.")
+        teams = [name.strip() for name in submitted]
+        if team_key(teams[0]) == team_key(teams[1]):
+            raise RehearsalError(422, "Use a different name for each team.")
+        coach, first = settings.get("coach_team"), settings.get("first")
+        if coach not in teams or first not in teams:
+            raise RehearsalError(422, "Choose a coach side and first pick from the matchup.")
+
+        game_format = settings.get("format")
+        if game_format not in ("Bo3", "Bo5"):
+            raise RehearsalError(422, "Choose a best-of-three or best-of-five series.")
+        patch = settings.get("patch")
+        if not isinstance(patch, str) or patch not in {*self.patches, DEMO_PATCH}:
+            raise RehearsalError(422, "Choose a patch from the champion catalog.")
+        try:
+            as_of = date.fromisoformat(settings.get("date", "")).isoformat()
+        except (TypeError, ValueError) as error:
+            raise RehearsalError(422, "Choose a valid as-of date.") from error
+
+        resolved = {team: self.teams.resolve(team, as_of) for team in teams}
+        ids = {team: history.id if history else f"prospective:{team_key(team)}" for team, history in resolved.items()}
+        if len(set(ids.values())) != 2:
+            raise RehearsalError(422, "Both names refer to the same team in earlier games.")
+        regions = [resolved[team].region for team in teams if resolved[team] is not None and resolved[team].region]
+        region = regions[0] if regions and len(set(regions)) == 1 else ""
+        overrides = settings.get("rosters") or {}
+        players = {}
+        for team, history in resolved.items():
+            lineup = overrides.get(team, ())
+            names = lineup.values() if isinstance(lineup, dict) else lineup
+            players[team] = self.teams.lineup_ids(names, history.player_ids if history else {}, as_of)
+        return Match(
+            metadata={
+                "id": PROSPECTIVE_ID, "source": PROSPECTIVE_ID, "title": " vs ".join(teams),
+                "teams": teams, "first": first, "date": as_of, "format": game_format, "patch": patch,
+                "rosters": {team: history.roster for team, history in resolved.items() if history and history.roster},
+                "team_history": {team: {"as_of": history.as_of} if history else None for team, history in resolved.items()},
+                "roster_dates": {team: history.roster_as_of for team, history in resolved.items() if history},
+            },
+            region=region, team_ids=ids,
+            player_ids=players,
+            previous=[], historical={}, opening=[], coach_team=coach,
+        )
 
     def bootstrap(self) -> dict:
         matches = [match.metadata for match in self.matches.values()]
@@ -199,4 +255,9 @@ class MatchCatalog:
             "champions": sorted(champions, key=str.casefold),
             "matches": matches,
             "default_match": DEMO_ID,
+            "patches": sorted(
+                {*self.patches, DEMO_PATCH},
+                key=lambda patch: tuple(int(part) if part.isdigit() else -1 for part in patch.split(".")),
+                reverse=True,
+            ),
         }

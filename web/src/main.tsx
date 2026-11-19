@@ -153,10 +153,14 @@ function App() {
   }
 
   const match = bootstrap?.matches.find(candidate => candidate.id === plan?.match_id)
-  const historical = (match?.source || plan?.source) === 'historical'
+  const scenario = match?.source || plan?.source
+  const historical = scenario === 'historical'
+  const prospective = scenario === 'prospective'
+  const teamsWithoutHistory = Object.entries(plan?.team_history ?? {})
+    .filter(([, evidence]) => evidence === null).map(([team]) => team)
   const ready = Boolean(bootstrap && plan)
   const tab = tabs.find(item => item.id === view)!
-  const context = [plan && `Patch ${plan.patch}`, plan && matchFormat(match ?? plan), plan?.date].filter(Boolean)
+  const context = [plan && `Patch ${plan.patch}`, plan && matchFormat(match ?? plan), plan?.date && (prospective ? `As of ${plan.date}` : plan.date)].filter(Boolean)
   const current = state?.node_id === selected ? state : null
 
   return (
@@ -183,9 +187,11 @@ function App() {
             {view === 'board' && plan?.priority && <p className="priority-line"><CircleDot size={14} />{plan.priority}</p>}
           </div>
           {plan && <div className="match-context">
-            <span className={`source-label ${historical ? 'source-historical' : ''}`}><Radio size={12} /> {historical ? (current?.history ? 'Historical replay' : 'Historical match · Rehearsal') : 'Illustrative scenario'}</span>
+            {(historical || scenario === 'illustrative') && <span className={`source-label ${historical ? 'source-historical' : ''}`}><Radio size={12} /> {historical ? (current?.history ? 'Historical replay' : 'Historical match · Rehearsal') : 'Illustrative scenario'}</span>}
+            {prospective && plan.coach_team && <span className="prospective-coach">Your team · {plan.coach_team}</span>}
             <strong>{match?.title || plan.title}</strong>
             <div className="context-meta">{context.map(item => <span key={item}>{item}</span>)}</div>
+            {prospective && teamsWithoutHistory.length > 0 && <p className="prospective-coverage">Limited team evidence for {teamsWithoutHistory.join(' and ')}</p>}
           </div>}
         </div>
         {error && <div className="error-banner" role="alert"><AlertCircle size={19} /><span>{error}</span>{ready && <button type="button" className="icon-button" onClick={() => setError('')} aria-label="Dismiss error"><X size={16} /></button>}</div>}
