@@ -219,6 +219,10 @@ class CalibrationSidecar:
         if model_id is not None and data["model_id"] != model_id:
             raise ValueError("Pick calibration was fitted for a different frozen bundle.")
         series = [_Series(**{**group, "losses": tuple(group["losses"])}) for group in data["series"]]
+        for group in series:
+            if (_patch(group.patch) is None or date.fromisoformat(group.completed) > date.fromisoformat(data["fit_through"])
+                    or group.turns < 1 or len(group.losses) != len(TEMPERATURES) or not all(map(isfinite, group.losses))):
+                raise ValueError("Invalid series evidence in pick calibration artifact.")
         return cls(series, fit_through=data["fit_through"], policy=CalibrationPolicy(**data["policy"]),
                    model_id=data["model_id"])
 

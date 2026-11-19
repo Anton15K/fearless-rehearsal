@@ -18,6 +18,15 @@ def incumbent_signature(bundle):
     return digest.hexdigest()
 
 
+def component_signatures(paths):
+    filenames = {"ban": ("manifest.json", "second_phase_ban.cbm"), "pair": ("challenger.json",)}
+    result = {}
+    for key, path in paths.items():
+        files = [path] if key == "calibration" else [path / name for name in filenames[key]]
+        result[key] = {file.name: sha256(file.read_bytes()).hexdigest() for file in files}
+    return result
+
+
 class DraftChallengers:
     def __init__(self, frozen, *, ban=None, calibration=None, pair=None):
         self.frozen = frozen
@@ -40,6 +49,8 @@ class DraftChallengers:
         if any(not isinstance(path, str) or not path.strip() for path in components.values()):
             raise ValueError("Every enabled component must have an artifact path.")
         paths = {name: policy.parent / value for name, value in components.items()}
+        if "component_sha256" in settings and settings["component_sha256"] != component_signatures(paths):
+            raise ValueError("A challenger artifact changed after the policy was written.")
         ban = None
         if "ban" in paths:
             from fearless.ban_challenger import BanChallenger

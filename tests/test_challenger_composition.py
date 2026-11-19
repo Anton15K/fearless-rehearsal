@@ -174,7 +174,8 @@ def test_private_policy_opt_in_loads_only_the_named_component(private_policy, mo
     assert composed.ban is None
 
 
-@pytest.mark.parametrize('damage', ['fingerprint', 'unknown component', 'bad root', 'bad path', 'bad sidecar'])
+@pytest.mark.parametrize('damage', ['fingerprint', 'unknown component', 'bad root', 'bad path', 'bad sidecar',
+                                    'invalid patch', 'changed component'])
 def test_bad_private_policy_falls_back_to_the_original_frozen_bundle(private_policy, monkeypatch, damage):
     bundle, policy, config, calibration_file = private_policy
     if damage == 'fingerprint':
@@ -189,6 +190,12 @@ def test_bad_private_policy_falls_back_to_the_original_frozen_bundle(private_pol
         sidecar = json.loads(calibration_file.read_text(encoding='utf8'))
         sidecar['series'] = None
         calibration_file.write_text(json.dumps(sidecar), encoding='utf8')
+    elif damage == 'invalid patch':
+        sidecar = json.loads(calibration_file.read_text(encoding='utf8'))
+        sidecar['series'][0]['patch'] = 'unknown'
+        calibration_file.write_text(json.dumps(sidecar), encoding='utf8')
+    elif damage == 'changed component':
+        config['component_sha256'] = {'calibration': {calibration_file.name: 'old checksum'}}
     policy.write_text(json.dumps(config), encoding='utf8')
     monkeypatch.setenv('FEARLESS_CHALLENGERS', str(policy))
 

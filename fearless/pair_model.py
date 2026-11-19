@@ -210,6 +210,7 @@ def _incumbent_identity(bundle):
 
 class PairChallenger:
     def __init__(self, artifact):
+        date.fromisoformat(artifact["train_through"])
         if (artifact.get("version") != 1 or not 3 <= artifact["beam_width"] <= 12
                 or len(artifact["weights"]) != len(FEATURES) or not all(map(isfinite, artifact["weights"]))):
             raise ValueError("Invalid pair challenger artifact.")

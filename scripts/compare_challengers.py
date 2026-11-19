@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from fearless.calibration import CalibrationSidecar, ScoredPick, bundle_fingerprint
-from fearless.challengers import DraftChallengers, incumbent_signature
+from fearless.challengers import DraftChallengers, component_signatures, incumbent_signature
 from fearless.model import DraftForecaster
 from fearless.model_features import History, evidence_date, prepare_games
 from fearless.outlook import lookahead
@@ -34,6 +34,7 @@ def write_json(path, value):
 
 def write_policy(bundle, output, components):
     write_json(output, {"version": 1, "incumbent": incumbent_signature(bundle),
+                        "component_sha256": component_signatures(components),
                         "components": {key: relpath(path.resolve(), output.parent.resolve())
                                        for key, path in components.items()}})
 

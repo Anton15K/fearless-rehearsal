@@ -217,6 +217,10 @@ class BanChallenger:
             raise ValueError('The ban challenger uses a different feature schema.')
         if manifest['frozen_bundle_sha256'] != _checksums(frozen_bundle_dir):
             raise ValueError('The ban challenger was fitted against a different frozen bundle.')
+        blend = manifest['blend']
+        temperatures = [blend['challenger_temperature'], blend['temperature']]
+        if not 0 <= blend['weight'] <= 1 or any(not np.isfinite(t) or t <= 0 for t in temperatures):
+            raise ValueError('Invalid temperatures or weight in the ban challenger.')
         model = CatBoostRanker().load_model(str(directory / 'second_phase_ban.cbm'))
         return cls(DraftForecaster.load(frozen_bundle_dir), model, manifest['blend'])
 
