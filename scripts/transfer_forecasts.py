@@ -31,6 +31,8 @@ def verify_cohort(path, lock, *, strata=3):
     events = {game.get("event") for game in rows}
     if None in events or "" in events or len(events) != strata:
         raise ValueError(f"Expected exactly {strata} nonempty event strata.")
+    if "events" in lock and dict(Counter(game["event"] for game in rows)) != lock["events"]:
+        raise ValueError("Tournament identities or sizes differ from the locked cohort.")
     return series
 
 
@@ -152,14 +154,17 @@ def main():
     args = parser.parse_args()
     lock = json.loads(args.lock.read_text())
     confidence_hash = digest(args.confidence)
-    if confidence_hash != args.confidence_sha256:
+    if confidence_hash != args.confidence_sha256 or confidence_hash != lock["confidence_sha256"]:
         raise ValueError("Confidence artifact differs from the frozen candidate digest.")
     catalog_hash = digest(args.catalog)
     if catalog_hash != lock.get("catalog_sha256"):
         raise ValueError("Legal champion catalog differs from the locked version.")
     prior_hash = digest(args.prior_events)
-    if prior_hash != args.prior_sha256:
+    if prior_hash != args.prior_sha256 or prior_hash != lock["prior_sha256"]:
         raise ValueError("Prior released evidence differs from the frozen production archive digest.")
+    if (digest(args.parent) != lock["parent_sha256"]
+            or digest(Path(__file__).resolve().parents[1] / "fearless" / "event_bans.py") != lock["ban_policy_sha256"]):
+        raise ValueError("Ban policy or incumbent differs from the locked candidates.")
     prior = completed_series(read_event_games(args.prior_events))
     parent = DraftChallengers.load(args.bundle, args.parent)
     confidence = EventConfidence.load(args.confidence, args.bundle)
