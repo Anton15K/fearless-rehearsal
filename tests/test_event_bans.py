@@ -57,6 +57,7 @@ def test_refresh_waits_for_entire_series_and_uses_released_role_history():
         assert ask(bans, day, target[:12]) == ask(source, day, target[:12])
 
     late = ask(bans, "2026-10-18", target[:12])
+    assert late["method"] == "refreshed_second_phase_ban" and late["underlying_method"] == "second_phase_ban_challenger"
     assert late["event_evidence"] == {"series_through": "2026-10-17", "released_series": 1}
     assert late["choices"][0]["champion"] in {CHAMPIONS[9], CHAMPIONS[29]}
     assert late["choices"] != ask(source, "2026-10-18", target[:12])["choices"]
@@ -70,6 +71,7 @@ def test_bans_refresh_openings_and_delegate_the_entire_pick_forecast():
     refreshed = ask(bans, "2026-10-16")
 
     assert refreshed["choices"] != ask(source, "2026-10-16")["choices"]
+    assert refreshed["method"] == "refreshed_opening_ban" and refreshed["underlying_method"] == "baseline"
     assert refreshed["calibrated"] is False
     assert ask(bans, "2026-10-16", row["actions"][:6]) == ask(source, "2026-10-16", row["actions"][:6])
 
@@ -123,3 +125,29 @@ def test_replay_counts_all_turns_and_calibrates_only_non_cold_picks():
     assert len(picks) == 30
     assert summary["confidence"]["hit3_delta_ci95"] == [0, 0]
     assert picks[0][2]["incumbent"] == picks[0][2]["candidate"]
+
+
+def test_prior_archive_adds_only_earlier_evidence_and_is_never_scored():
+    target = game("target", 1, "2026-10-15", CHAMPIONS[:20])
+    past = game("past", 1, "2026-10-14", CHAMPIONS[20:40])
+    future = game("future", 1, "2026-10-16", CHAMPIONS[40:])
+    params = (completed_series([target]), {"16.20": CHAMPIONS}, EventConfidence(1.2))
+    observed = replay(policy(), *params, prior=completed_series([past]))
+
+    assert observed == replay(policy(), *params, prior=completed_series([past, future]))
+    bans, picks, coverage = observed
+    assert len(picks) == len(bans["opening"]) + len(bans["late"]) == 10
+    assert coverage == {"refreshed_bans": 10, "calibrated_picks": 10, "unchanged_pick_rankings": 10}
+
+
+def test_passed_bans_stay_in_the_prefix_and_outside_named_denominators():
+    row = game("passed", 1, "2026-10-15", CHAMPIONS[:20])
+    row["actions"][0]["champion"] = None
+    row["actions"][12]["champion"] = None
+    bans, picks, coverage = replay(policy(), completed_series([row]), {"16.20": CHAMPIONS}, EventConfidence(1.2))
+
+    scores = reports(bans, picks)
+    assert scores["ban"]["all"]["incumbent"]["turns"] == 8
+    assert len(bans["opening"]) == 5 and len(bans["late"]) == 3
+    assert coverage["passed_opening_bans"] == coverage["passed_late_bans"] == 1
+    assert len(picks) == 10

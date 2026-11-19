@@ -41,7 +41,9 @@ class EventBanRefresh:
         if not count:
             return self.forecaster.parent.forecast(limit=limit, **context)
         result = self._challenger(updated).forecast(limit=limit, **context)
-        return {**result, "calibrated": False, "calibration_through": None, "model_source": "private_event",
+        method = "refreshed_opening_ban" if len(current) < 6 else "refreshed_second_phase_ban"
+        return {**result, "method": method, "underlying_method": result.get("method"),
+                "calibrated": False, "calibration_through": None, "model_source": "private_event",
                 "probability_quality": "estimated", "event_evidence": {"series_through": last, "released_series": count}}
 
     def rank_pairs(self, **context):

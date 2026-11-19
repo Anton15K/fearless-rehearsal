@@ -35,6 +35,8 @@ def verify_cohort(path, lock, *, strata=3):
 
 
 def probabilities(choices, legal):
+    if not legal and not choices:
+        return {}
     result = {row["champion"]: row["probability"] for row in choices}
     values = list(result.values())
     if (len(choices) != len(legal) or set(result) != legal or not values
@@ -48,8 +50,9 @@ def score(baseline, candidate, target):
     return {"incumbent": quality(baseline, target), "candidate": quality(candidate, target)}
 
 
-def replay(parent, series, catalog, confidence):
-    source = EventForecaster(parent, (game for group in series for game in group), recipe="refresh")
+def replay(parent, series, catalog, confidence, *, prior=()):
+    history = (game for group in (*prior, *series) for game in group)
+    source = EventForecaster(parent, history, recipe="refresh")
     bans = EventBanRefresh(source)
     advance = [cache_history(model) for model in (parent.frozen, source.updated)]
     ban_rows = {"opening": [], "late": []}
@@ -64,7 +67,8 @@ def replay(parent, series, catalog, confidence):
                 prefix = game["actions"][:index]
                 legal = set(legal_champions(ctx["pool"], ctx["locked"], prefix))
                 target = action["champion"]
-                if target not in legal:
+                passed_ban = action["kind"] == "ban" and target is None
+                if target not in legal and not passed_ban:
                     raise ValueError("A recorded ban or pick is outside the locked legal choice set.")
                 base_context = dict(**ctx, current=prefix, limit=len(legal))
                 extended = dict(**base_context, event=event, series_id=sid)
@@ -80,7 +84,10 @@ def replay(parent, series, catalog, confidence):
                     elif before != after:
                         raise ValueError("A cold ban differed from the promoted policy.")
                     phase = "opening" if index < 6 else "late"
-                    ban_rows[phase].append((event, sid, score(original, refreshed, target)))
+                    if passed_ban:
+                        coverage[f"passed_{phase}_bans"] += 1
+                    else:
+                        ban_rows[phase].append((event, sid, score(original, refreshed, target)))
                     continue
 
                 before = source.forecast(**extended)
@@ -102,7 +109,9 @@ def replay(parent, series, catalog, confidence):
                 pick_rows.append((event, sid, score(original, calibrated, target)))
                 coverage["unchanged_pick_rankings"] += 1
     games = sum(map(len, series))
-    if (len(ban_rows["opening"]), len(ban_rows["late"]), len(pick_rows)) != (6 * games, 4 * games, 10 * games):
+    opening = len(ban_rows["opening"]) + coverage["passed_opening_bans"]
+    late = len(ban_rows["late"]) + coverage["passed_late_bans"]
+    if (opening, late, len(pick_rows)) != (6 * games, 4 * games, 10 * games):
         raise ValueError("Forecast turn counts differ from the full locked cohort.")
     if any(row[2]["incumbent"][0] != row[2]["candidate"][0] for row in pick_rows):
         raise ValueError("Pick temperature changed top-three hits.")
@@ -110,6 +119,8 @@ def replay(parent, series, catalog, confidence):
 
 
 def summary(rows):
+    if not rows:
+        return {"incumbent": None, "candidate": None, "hit3_delta_ci95": None, "nll_delta_ci95": None, "series": 0}
     return {"incumbent": metrics([row[2]["incumbent"] for row in rows]),
             "candidate": metrics([row[2]["candidate"] for row in rows]),
             "hit3_delta_ci95": intervals(rows, 0), "nll_delta_ci95": intervals(rows, 1),
@@ -123,8 +134,9 @@ def reports(bans, picks):
 
 def passed(report):
     all_bans, confidence = report["ban"]["all"], report["confidence"]
-    phases_safe = all(row["candidate"]["nll"] <= row["incumbent"]["nll"] for row in report["ban"].values())
-    return {"ban": all_bans["hit3_delta_ci95"][0] > 0 and phases_safe,
+    phases_safe = all(row["candidate"] and row["candidate"]["nll"] <= row["incumbent"]["nll"]
+                      for row in report["ban"].values())
+    return {"ban": phases_safe and all_bans["hit3_delta_ci95"][0] > 0,
             "confidence": (confidence["nll_delta_ci95"][1] < 0
                            and confidence["candidate"]["ece"] < confidence["incumbent"]["ece"]
                            and confidence["candidate"]["hits"] == confidence["incumbent"]["hits"])}
@@ -135,6 +147,8 @@ def main():
     for argument in ("bundle", "parent", "games", "catalog", "lock", "confidence", "output"):
         parser.add_argument("--" + argument, type=Path, required=True)
     parser.add_argument("--confidence-sha256", required=True)
+    parser.add_argument("--prior-events", type=Path, required=True)
+    parser.add_argument("--prior-sha256", required=True)
     args = parser.parse_args()
     lock = json.loads(args.lock.read_text())
     confidence_hash = digest(args.confidence)
@@ -143,10 +157,14 @@ def main():
     catalog_hash = digest(args.catalog)
     if catalog_hash != lock.get("catalog_sha256"):
         raise ValueError("Legal champion catalog differs from the locked version.")
+    prior_hash = digest(args.prior_events)
+    if prior_hash != args.prior_sha256:
+        raise ValueError("Prior released evidence differs from the frozen production archive digest.")
+    prior = completed_series(read_event_games(args.prior_events))
     parent = DraftChallengers.load(args.bundle, args.parent)
     confidence = EventConfidence.load(args.confidence, args.bundle)
     series = verify_cohort(args.games, lock)
-    ban_rows, picks, coverage = replay(parent, series, json.loads(args.catalog.read_text()), confidence)
+    ban_rows, picks, coverage = replay(parent, series, json.loads(args.catalog.read_text()), confidence, prior=prior)
     events = sorted({row[0] for row in picks})
     overall = reports(ban_rows, picks)
     by_event = {event: reports({phase: [row for row in rows if row[0] == event]
@@ -155,8 +173,10 @@ def main():
     report = {"evaluation": "retrospective event transfer", "manifest_sha256": digest(args.lock),
               "games_sha256": lock["sha256"], "catalog_sha256": catalog_hash, "parent_sha256": digest(args.parent),
               "incumbent": incumbent_signature(args.bundle), "confidence_sha256": confidence_hash,
+              "prior_sha256": prior_hash, "prior_games": sum(map(len, prior)), "prior_series": len(prior),
               "temperature": confidence.temperature, "games": lock["games"], "series": len(series), "strata": events,
               "games_by_event": dict(Counter(group[0]["event"] for group in series for _ in group)),
+              "passed_bans": {phase: coverage.get(f"passed_{phase}_bans", 0) for phase in ban_rows},
               "gates": {"ban": BAN_GATE, "confidence": CONFIDENCE_GATE}, "promoted": passed(overall),
               "overall": overall, "by_event": by_event, "coverage": coverage, "illegal_predictions": 0}
     write_json(args.output, report)
