@@ -48,6 +48,8 @@ A second comparison used 118 previously unused LPL, CBLOL and LCP promotion game
 
 A simple shortlist of the most frequent legal actions on the patch scored **16.84% on picks**, **30.68% on bans** and **10.62% on exact pairs** in the corresponding comparisons. The pair model’s advantage over pair frequency remains uncertain. [Patch-popularity comparison](docs/transfer-evaluation.md#comparison-with-patch-popularity)
 
+A role-first challenger found **61/303** exact pairs on two previously unused Korean postseason stages. The existing model found **39/303** and patch frequency found **59/303**. The narrow edge over frequency missed the promotion criterion. [Role-first model and results](docs/role-pair-results.md)
+
 ## Project map
 
 | Source | Responsibility |
