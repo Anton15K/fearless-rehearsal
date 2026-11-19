@@ -14,7 +14,11 @@ From a checkout, run the following command with Python 3.11+ and Node.js 22 inst
 
 GitHub Codespaces can also run the repository’s dev container. After setup, open forwarded port 8000. [Open in Codespaces](https://codespaces.new/Anton15K/fearless-rehearsal)
 
+For a static standalone build, run `npm --prefix web ci` and `npm --prefix web run build:demo`, then `python3 -m http.server 8002 --directory web/dist-demo`. Open [localhost:8002](http://localhost:8002). This edition runs the same Python draft rules inside a browser worker and saves plans in that browser’s IndexedDB. The runtime, draft data and public forecast are served from the build directory. Champion portraits load from Riot when available.
+
 ## Rehearse a decision
+
+For an upcoming series, choose **Match prep → New matchup**. Enter both teams, your coaching side, first pick, as-of date, patch and series format. Add a roster override if needed. The board starts at Game 1 with no actions or series locks. Known team and player identities come from games completed before the selected date.
 
 1. Open the illustrative Cloud9 Kia–LYON board. It starts at Cloud9’s last ban of the first ban phase in Game 2. Blaber has Poppy pinned for Game 3.
 2. Choose the **Poppy** ban. Neither team can pick her in Game 2. The ban expires at the game boundary, so the Game 3 pin is protected.
@@ -27,7 +31,7 @@ GitHub Codespaces can also run the repository’s dev container. After setup, op
 | Board | Evidence shown |
 | --- | --- |
 | Illustrative Poppy scenario | Authored coaching options that demonstrate the rules and pin outcomes. |
-| Historical board in a public checkout | Counts from earlier professional games in the public dataset. |
+| Historical board in a public checkout | An independently fitted LCS frequency model. It shows estimated probabilities, available historical support, and conditional paths. |
 | Historical board with the private evaluated bundle | A model ranking of legal choices at this turn, with evidence dates and calibrated probabilities when available. On opponent turns, the board can expand one or two replies and group consecutive picks in either order. |
 
 The top three are three candidates for **one next action**. A path combines successive forecasts and stops at the coach’s next decision. The board displays how much probability the visible paths cover and how much lies outside them. It does not estimate which team wins the match.

@@ -20,3 +20,25 @@ jobs:
       - run: python -m pytest -q
       - run: npm ci && npm test && npm run build
         working-directory: web
+      - name: Build the standalone edition
+        run: npm run build:demo
+        working-directory: web
+      - name: Exercise both editions in Chromium
+        working-directory: web
+        run: |
+          npx playwright install --with-deps chromium
+          python -m uvicorn fearless.api:app --host 127.0.0.1 --port 8000 --app-dir .. > "$RUNNER_TEMP/api.log" 2>&1 &
+          mkdir -p "$RUNNER_TEMP/standalone"
+          ln -s "$PWD/dist-demo" "$RUNNER_TEMP/standalone/fearless-rehearsal"
+          python -m http.server 8002 --bind 127.0.0.1 --directory "$RUNNER_TEMP/standalone" > "$RUNNER_TEMP/standalone.log" 2>&1 &
+          curl --retry-connrefused --retry 10 --retry-delay 1 --fail --silent http://127.0.0.1:8000/api/bootstrap > /dev/null
+          node scripts/smoke.mjs http://127.0.0.1:8000/
+          node scripts/smoke.mjs http://127.0.0.1:8002/fearless-rehearsal/
+        env:
+          FEARLESS_WEB: ${{ github.workspace }}/web/dist
+          FEARLESS_DB: ${{ runner.temp }}/rehearsal.sqlite3
+      - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: fearless-rehearsal-standalone
+          path: web/dist-demo

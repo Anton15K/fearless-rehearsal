@@ -49,6 +49,19 @@ Hit@3 is the percentage of individual turns whose actual champion appears among 
 
 The later-period baselines were 16.18% and 25.45%. The metrics file produced by training includes per-patch, region, phase and game slices. Model estimates describe observed professional behavior. We have not evaluated win impact, the eventual availability of a future pin, or path-level calibration. For two consecutive opponent picks, a pair’s displayed mass is the sum of its represented orders. Omitted orders and candidates remain in the residual.
 
+## Public forecast
+
+Judges can use the same tree with an independent public forecast on the August 1 Cloud9–Dignitas replay. The open LCS corpus contains 160 games. The estimator uses 90 earlier games from 33 series for legal-opportunity counts by action, region, recency and slot. Another 38 games from 16 series set its temperatures. A further 29 games from eight series were held out. The three showcased games were excluded. It has no player-pool feature.
+
+On the public holdout, pick Hit@3 was **9.31%** versus **4.48%** for a simple frequency baseline. Ban Hit@3 was **25.17%** versus **22.41%**. Ban log loss was slightly worse than the baseline (4.105 versus 4.096), as was pick top-choice calibration error (5.17% versus 3.95%). The interface labels this model’s probabilities **estimated**. Its small single-league sample measures a different task population from the private scorecard above. Each public path keeps its unrepresented mass visible.
+
+Rebuild the deterministic, open-data aggregate with the standard Python library from the repository root.
+
+```sh
+python3 -m fearless.public_model --games fearless/assets/public_games.jsonl \
+  --catalog fearless/assets/champions.json --output .local/public_forecast.json
+```
+
 ## Reproduce privately
 
 From the repository root, use a participant-authorized local copy of the official archive, Python 3.11+ and the project’s data and model extras. All paths below keep derived data under the ignored `.local` directory.
