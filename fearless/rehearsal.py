@@ -413,7 +413,10 @@ def _probability_quality(result: dict) -> str | None:
     if (
         result.get("probability_quality") == "estimated" and (
             (result.get("model_source") == "public" and result.get("method") == "public_frequencies")
-            or (result.get("model_source") == "private_event" and result.get("method") in ("refreshed_pick", "patch_pick_adaptation"))
+            or (result.get("model_source") == "private_event" and result.get("method") in (
+                "refreshed_pick", "patch_pick_adaptation", "temperature_refreshed_pick",
+                "refreshed_opening_ban", "refreshed_second_phase_ban",
+            ))
         )
     ):
         return "estimated"
@@ -500,7 +503,7 @@ def node_state(plan: dict, node_id: str, forecaster: Any = None, frequencies: An
             if quality == "calibrated":
                 source += " · calibrated for named champion actions"
             elif result.get("model_source") == "private_event" and quality == "estimated":
-                source = f"Tournament pick estimate · evidence through {result['as_of']}"
+                source = f"Tournament {pos.kind} estimate · evidence through {result['as_of']}"
             elif quality == "estimated":
                 source = f"Open LCS draft estimate · training through {result['as_of']}"
             forecast = {

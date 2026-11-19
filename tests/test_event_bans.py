@@ -83,7 +83,7 @@ def test_calibration_preserves_ties_and_metadata_for_a_full_distribution(tmp_pat
     (bundle / "history.jsonl.gz").write_bytes(b"test archive")
     artifact = tmp_path / "confidence.json"
     artifact.write_text(json.dumps({"version": 1, "incumbent": incumbent_signature(bundle),
-                                    "recipe": "refresh", "temperature": 2.0}))
+                                    "recipe": "refresh", "temperature": 1.3}))
     model = EventConfidence.load(artifact, bundle)
     rows = [{"champion": name, "probability": value, "evidence": [name]}
             for name, value in [("Zoe", .45), ("Ahri", .45), ("Ashe", .10)]]
