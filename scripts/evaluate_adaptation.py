@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from fearless.challengers import DraftChallengers, incumbent_signature
-from fearless.event_forecaster import EventForecaster, RECIPES, digest
+from fearless.event_forecaster import EventForecaster, RECIPES, digest, verify_new_games
 from fearless.event_series import completed_series, read_event_games
 from fearless.model_features import History, evidence_date
 from fearless.rules import legal_champions
@@ -201,7 +201,10 @@ def confirm(args, parent, catalog):
             or choice["artifacts"] != {"pick": digest(args.pick), "pair": digest(args.pair)}):
         raise ValueError("Recipes or parameter artifacts differ from development selection.")
     rows, series = verified_rows(args.games, args.audit)
-    verify_reservation(rows, args.games, json.loads(args.lock.read_text()))
+    lock = json.loads(args.lock.read_text())
+    if digest(args.catalog) != lock["catalog_sha256"]:
+        raise ValueError("Legal champion catalog differs from the reserved version.")
+    verify_reservation(rows, args.games, lock)
     recipe = choice["recipe"]
     model = EventForecaster(parent, rows, recipe=recipe, pick=pick_model(args.pick, args.bundle) if "fusion" in recipe else None,
                             pair=pair_model(args.pair, args.bundle))
@@ -233,6 +236,7 @@ def package(args, parent, catalog):
             or choice["incumbent"] != incumbent_signature(args.bundle)):
         raise ValueError("Confirmation and selected policy disagree.")
     _, series = verified_rows(args.games, args.audit)
+    verify_new_games(parent.frozen, series)
     files = {"events": args.games}
     recipe = choice["recipe"] if result["promoted"]["pick"] else "fixed"
     if "fusion" in recipe:

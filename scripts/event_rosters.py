@@ -98,9 +98,33 @@ def main():
     for field in ("games", "input-audit", "archive", "catalog", "players", "output", "audit"):
         join.add_argument("--" + field, type=Path, required=True)
     join.add_argument("--event", help="Event name for rows whose source does not supply one.")
+    combine = sub.add_parser("combine", help="Build a dated serving snapshot from audited completed-event files.")
+    combine.add_argument("--source", action="append", nargs=2, metavar=("GAMES", "AUDIT"), type=Path, required=True)
+    combine.add_argument("--output", type=Path, required=True)
+    combine.add_argument("--audit", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "fetch":
         return fetch_players(args.stage, args.output)
+    if args.command == "combine":
+        games, sources = [], []
+        for path, audit in args.source:
+            metadata = json.loads(audit.read_text())
+            rows = read_event_games(path)
+            fingerprint = digest(path)
+            if (fingerprint != metadata["sha256"] or len(rows) != metadata["games"]
+                    or len(completed_series(rows)) != metadata["series"]):
+                raise ValueError("Input cohort differs from its audit.")
+            games.extend(rows)
+            sources.append(fingerprint)
+        series = completed_series(games)
+        output_rows = sorted(games, key=lambda row: (row["date"], row["series_id"], row["game_number"]))
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        temp = args.output.with_suffix(".tmp")
+        temp.write_text("".join(json.dumps(g, sort_keys=True, ensure_ascii=False) + "\n" for g in output_rows))
+        temp.replace(args.output)
+        write_json(args.audit, {"games": len(games), "series": len(series), "sha256": digest(args.output),
+                  "sources": sources, "events": sorted({g["event"] for g in games})})
+        return
     audit = json.loads(args.input_audit.read_text())
     if audit["sha256"] != digest(args.games):
         raise ValueError("Source games differ from input audit.")

@@ -18,6 +18,22 @@ def digest(path):
     return sha256(Path(path).read_bytes()).hexdigest()
 
 
+def verify_new_games(frozen, series):
+    ids = {str(g["series_id"]) for g in frozen.games}
+    games = {str(g.get("game_id")) for g in frozen.games if g.get("game_id")}
+    def signature(row):
+        return row["date"], tuple((a["kind"], frozen.catalog.canonical(a["champion"])) for a in row["actions"])
+    drafts = {signature(g) for g in frozen.games if len(g["actions"]) == DRAFT_LENGTH}
+    for group in series:
+        if str(group[0]["series_id"]) in ids:
+            raise ValueError("External data overlaps a frozen series.")
+        for game in group:
+            key = signature(game)
+            if str(game["game_id"]) in games or key in drafts:
+                raise ValueError("External data overlaps a frozen or previously supplied game.")
+            drafts.add(key)
+
+
 class EventForecaster:
     accepts_event = True
 
@@ -31,8 +47,7 @@ class EventForecaster:
         self.series = completed_series(rows)
         self.days = tuple(completion_day(series) for series in self.series)
         self.indices = {series[0]["series_id"]: i for i, series in enumerate(self.series)}
-        if set(self.indices).intersection(g["series_id"] for g in self.frozen.games):
-            raise ValueError("External event evidence overlaps frozen series identifiers.")
+        verify_new_games(self.frozen, self.series)
         self.events = sorted({s[0]["event"] for s in self.series if s[0].get("event")})
         self._cache = OrderedDict()
         self._lock = Lock()
@@ -116,4 +131,5 @@ class EventForecaster:
         if self.pair is None:
             return self.parent.rank_pairs(**context)
         _, pair, _, _, _ = self._snapshot(context["date"], series_id)
-        return pair.rank_pairs(forecaster=self.frozen, event=event, series_id=series_id, **context)
+        ranked = pair.rank_pairs(forecaster=self.frozen, event=event, series_id=series_id, **context)
+        return ranked or self.parent.rank_pairs(**context)

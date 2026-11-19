@@ -1,5 +1,4 @@
 from copy import deepcopy
-from types import SimpleNamespace
 
 import pytest
 
@@ -28,7 +27,7 @@ def game(series, number, size, day, names, locked=()):
 def rows():
     one = game("S1", 1, 2, "2026-10-15", CHAMPIONS[:20])
     return [one, game("S1", 2, 2, "2026-10-16", CHAMPIONS[20:40], series_locks([one["actions"]])),
-            game("S2", 1, 1, "2026-10-19", CHAMPIONS[:20])]
+            game("S2", 1, 1, "2026-10-19", CHAMPIONS[5:25])]
 
 
 def test_release_uses_last_game_utc_completion_and_omits_replayed_series(rows):

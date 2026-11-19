@@ -12,6 +12,7 @@ from tempfile import NamedTemporaryFile
 
 from fearless.calibration import bundle_fingerprint
 from fearless.event_series import completed_series, completion_day, read_event_games
+from fearless.model import serving_catalog
 from fearless.model_features import ChampionCatalog, _patch_key
 from fearless.rules import DRAFT_LENGTH, legal_champions, schedule
 
@@ -78,7 +79,7 @@ class PatchPickModel:
                 or artifact.get("model_id") != bundle_fingerprint(bundle)):
             raise ValueError("Patch pick artifact is incompatible with the frozen bundle.")
         manifest = json.loads((Path(bundle) / "manifest.json").read_text(encoding="utf8"))
-        return cls(ChampionCatalog.from_json(manifest["catalog"]), _Parameters(**artifact["parameters"]))
+        return cls(serving_catalog(manifest["catalog"]), _Parameters(**artifact["parameters"]))
 
     def with_completed_series(self, rows):
         """Release additional whole series without mutating this model or retaining its input rows."""

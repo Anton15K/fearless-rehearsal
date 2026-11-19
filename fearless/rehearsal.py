@@ -388,20 +388,23 @@ def _public_roster_evidence(plan: dict, result: dict) -> dict:
     return public
 
 
-def _forecast_context(plan: dict, pos: Position, prefix: list[DraftAction], forecaster=None) -> dict:
+def _forecast_context(plan: dict, pos: Position, prefix: list[DraftAction], forecaster=None, overrides_only=False) -> dict:
     ids = plan["team_ids"]
     current = [{**action, "team": ids[action["team"]]} for action in prefix]
+    rosters = _model_rosters(plan)
+    if plan.get("source") == PROSPECTIVE_ID and (overrides_only or getattr(forecaster, "accepts_event", False)):
+        rosters = {ids[name]: rosters[ids[name]] for name in plan.get("roster_overrides", ()) if ids[name] in rosters}
     return dict(
         date=plan["date"], patch=plan["patch"], region=plan["region"],
         first=ids[pos.first], second=ids[pos.second], game_number=pos.game, current=current,
-        locked=sorted(pos.locked), pool=plan["pool"], rosters=_model_rosters(plan),
+        locked=sorted(pos.locked), pool=plan["pool"], rosters=rosters,
         **({"event": plan.get("event"), "series_id": plan.get("match_id")}
            if getattr(forecaster, "accepts_event", False) else {}),
     )
 
 
-def forecast_at(plan: dict, pos: Position, forecaster: Any, prefix: list[DraftAction], limit: int) -> dict:
-    return forecaster.forecast(**_forecast_context(plan, pos, prefix, forecaster), limit=limit)
+def forecast_at(plan: dict, pos: Position, forecaster: Any, prefix: list[DraftAction], limit: int, *, overrides_only=False) -> dict:
+    return forecaster.forecast(**_forecast_context(plan, pos, prefix, forecaster, overrides_only), limit=limit)
 
 
 def _probability_quality(result: dict) -> str | None:
@@ -431,7 +434,7 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
     def forecast(prefix):
         if path_model is forecaster and list(prefix) == pos.current:
             return initial
-        return forecast_at(plan, pos, path_model, prefix, limit=3)
+        return forecast_at(plan, pos, path_model, prefix, limit=3, overrides_only=getattr(forecaster, "accepts_event", False))
 
     future = [pin for pin in plan["pins"] if pin["game"] >= pos.game]
     pin = min(
