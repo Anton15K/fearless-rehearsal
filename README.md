@@ -4,6 +4,8 @@ A League of Legends coach can fork a pick or ban during prep, see the opponentâ€
 
 ![A Game 2 rehearsal with the draft sequence, available decisions, and a Poppy reservation for Game 3](docs/rehearsal-board.png)
 
+[Watch the 80-second coach walkthrough](docs/walkthrough.mp4)
+
 ## Run the board
 
 From a checkout, run the following command with Python 3.11+ and Node.js 22 installed. It creates a virtual environment, builds the frontend, starts FastAPI and serves the board at [localhost:8000](http://localhost:8000).
