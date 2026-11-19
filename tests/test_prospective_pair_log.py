@@ -139,6 +139,64 @@ def test_live_still_open_attestations_can_verify_both_predictions(ledgers):
     assert report["conditional"]["statuses"] == {"missed": 2, "scored": 1}
 
 
+def test_attestations_cannot_qualify_a_window_after_a_verified_later_lock(ledgers):
+    ledger, clock, _ = ledgers
+    clock.set("10:30")
+    commit(ledger, pre_draft_rankings={"7": ranked(7)})
+    clock.set("11:04")
+    window(ledger)
+    clock.set("11:20")
+    ledger.attest_unopened_draft(**GAME, observed_at=time("11:20"), source=SOURCE)
+    ledger.attest_open_window(**GAME, prefix=ACTIONS[:7], observed_at=time("11:20"), source=SOURCE)
+    clock.set("11:40")
+    ledger.record_outcome(**GAME, actions=ACTIONS, actual_context=actual_context(), source=SOURCE,
+                          target_times={"9": time("11:10")})
+
+    report = ledger.score(TRIAL["trial_id"])
+    for panel in ("pre_draft", "conditional"):
+        assert report[panel]["statuses"] == {"missed": 2, "timing_conflict": 1}
+
+
+def test_a_verified_draft_start_can_invalidate_an_early_conditional_observation(ledgers):
+    ledger, clock, _ = ledgers
+    clock.set("10:30")
+    commit(ledger)
+    clock.set("11:04")
+    window(ledger)
+    clock.set("11:40")
+    ledger.record_outcome(**GAME, actions=ACTIONS, actual_context=actual_context(), source=SOURCE,
+                          draft_started_at=time("11:05"), target_times={"7": time("11:06")})
+
+    assert ledger.score(TRIAL["trial_id"])["conditional"]["statuses"] == {"missed": 2, "timing_conflict": 1}
+
+
+def test_unsourced_actions_require_an_authenticated_attachment_to_score(ledgers):
+    ledger, clock, _ = ledgers
+    clock.set("10:30")
+    commit(ledger, pre_draft_rankings={"7": ranked(7)})
+    clock.set("11:04")
+    window(ledger)
+    clock.set("11:40")
+    ledger.record_outcome(**GAME, actions=ACTIONS)
+    ledger.record_verified_context(**GAME, actual_context=actual_context(), source=SOURCE)
+    ledger.record_verified_timing(**GAME, source=SOURCE, draft_started_at=time("11:00"), target_times={"7": time("11:05")})
+
+    report = ledger.score(TRIAL["trial_id"])
+    for panel in ("pre_draft", "conditional"):
+        assert report[panel]["statuses"] == {"missed": 2, "outcome_source_unknown": 1}
+
+    modified = [{**ACTIONS[0], "champion": POOL[48]}, *ACTIONS[1:]]
+    with pytest.raises(ValueError, match="immutable"):
+        ledger.record_outcome(**GAME, actions=modified, source=SOURCE)
+    with pytest.raises(ValueError, match="timing source"):
+        ledger.record_outcome(**GAME, actions=ACTIONS, source="unregistered")
+    first = ledger.record_outcome(**GAME, actions=ACTIONS, source=SOURCE)
+    assert ledger.record_outcome(**GAME, actions=ACTIONS, source=SOURCE) == first
+    report = ledger.score(TRIAL["trial_id"])
+    for panel in ("pre_draft", "conditional"):
+        assert report[panel]["statuses"] == {"missed": 2, "scored": 1}
+
+
 def test_actual_clock_and_exact_prefix_prevent_backfilled_hits(ledgers):
     ledger, clock, _ = ledgers
     clock.set("10:30")

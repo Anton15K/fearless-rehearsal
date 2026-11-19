@@ -27,6 +27,7 @@ _KEYS = {
     "attestations": ("trial_id", "game_id", "slot"),
     "verified_times": ("trial_id", "game_id", "slot"),
     "verified_contexts": ("trial_id", "game_id"),
+    "verified_outcome_sources": ("trial_id", "game_id"),
     "outcomes": ("trial_id", "game_id"),
 }
 
@@ -444,7 +445,7 @@ class TrialLedger:
 
     def record_outcome(self, *, trial_id, game_id, actions, actual_context=None, target_times=None,
                        draft_started_at=None, source=None):
-        """Append the verified full draft and any independently verified timing."""
+        """Append a full draft, or attach a registered source to identical earlier actions."""
         key = (trial_id, game_id)
         if len(actions) != DRAFT_LENGTH:
             raise ValueError("An outcome requires a complete legal draft.")
@@ -462,6 +463,9 @@ class TrialLedger:
                 _write_context(db, key, trial, now, source, actual_context)
             verified = _read(db, "verified_contexts", key)
             complete = _validate_outcome(actions, verified[1]["context"] if verified else None)
+            previous = _read(db, "outcomes", key)
+            if previous and previous[1] == {"status": "completed", "actions": complete, "source": None} and source is not None:
+                return _append(db, "verified_outcome_sources", key, {"source": source}, now)
             return _append(db, "outcomes", key, {
                 "status": "completed", "actions": complete, "source": source,
             }, now)
@@ -491,6 +495,9 @@ class TrialLedger:
                 committed = _read(db, "commitments", key)
                 outcome = _read(db, "outcomes", key)
                 actual = outcome[1] if outcome else None
+                source = _read(db, "verified_outcome_sources", key)
+                if actual and source:
+                    actual = {**actual, "source": source[1]["source"]}
                 timing = _verified_times(db, key)
                 verified = _read(db, "verified_contexts", key)
                 actual_context = verified[1]["context"] if verified else None
@@ -519,6 +526,8 @@ def _assess(game_id, slot, rankings, committed, actual, actual_context, timing, 
         return {**row, "status": "missed"}
     if actual is None:
         return {**row, "status": "awaiting_outcome"}
+    if actual["source"] is None:
+        return {**row, "status": "outcome_source_unknown"}
     if actual_context is None:
         return {**row, "status": "context_unknown"}
     expected = {**committed[1]["context"], "game_id": game_id, "fearless": True}
@@ -537,14 +546,21 @@ def _assess(game_id, slot, rankings, committed, actual, actual_context, timing, 
         if forecast[1]["prefix"] != actual["actions"][:slot]:
             return {**row, "status": "prefix_mismatch"}
         recorded_at, target_time = forecast[0], timing.get(slot)
-        if any(known >= slot and recorded_at >= value for known, value in timing.items()):
+        later_times = [value for known, value in timing.items() if known >= slot]
+        if any(recorded_at >= value for value in later_times):
             return {**row, "status": "retrospective_late"}
+        if any(known < slot and forecast[1]["observed_at"] < value for known, value in timing.items()):
+            return {**row, "status": "timing_conflict"}
     else:
         recorded_at, target_time = committed[0], draft_started_at
+        later_times = timing.values()
     if target_time and recorded_at >= target_time:
         return {**row, "status": "retrospective_late"}
-    if target_time is None and attested is None:
-        return {**row, "status": "retrospective_unknown"}
+    if target_time is None:
+        if attested is None:
+            return {**row, "status": "retrospective_unknown"}
+        if any(attested[1]["observed_at"] >= value for value in later_times):
+            return {**row, "status": "timing_conflict"}
     target = sorted(action["champion"] for action in actual["actions"][slot:slot + 2])
     return {**row, "status": "scored", "hits": {model: target in ranks for model, ranks in rankings.items()},
             "abstained": [model for model, ranks in rankings.items() if not ranks]}
