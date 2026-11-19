@@ -20,6 +20,8 @@ Role-first gained **7.26 percentage points** over the existing model (paired 95%
 
 Of 106 indexed games, 101 games in 25 complete series passed the source checks. One five-game LCK Challengers series had conflicting first-pick records. All included games had ten verified played positions. Only whole series completed on earlier UTC dates contributed team, player and role features. Final played roles supplied the evaluation labels after each forecast. The two Korean competitions used the same patch, 16.16. A future-patch prospective gain remains unverified.
 
+On the 599 previously examined games, using one shared historical feed for all three methods, role-first found 312/1,797 pairs (17.36%), the existing model 234 (13.02%), and patch frequency 219 (12.19%). These development diagnostics do not count toward the Korean confirmation decision.
+
 ## Repeat the private comparison
 
 Use the verified private artifacts from the [previous study](transfer-evaluation.md#reproduce-and-serve-privately). `events.jsonl` there contains 599 previously examined games. The pending pilot uses Riot patch 16.23; this exact public pool is joined to the earlier production catalog before creating the freeze.
@@ -31,6 +33,14 @@ bundle=.local/training/final
 mkdir -p "$w/holdout"
 python -m scripts.patch_catalog "$w/holdout/catalog.json" 16.16
 python -m scripts.patch_catalog "$w/riot-live.json" 16.23
+python -m scripts.event_drafts --cohort role-pairs --archive .local/training/enriched.jsonl \
+  --previous .local/improvements/fresh/worlds.jsonl --previous "$a/holdout/games.jsonl" --previous "$a/transfer/games.jsonl" \
+  --catalog "$w/holdout/catalog.json" --cache "$w/holdout/wire" --output "$w/holdout/drafts.jsonl" --audit "$w/holdout/draft-audit.json"
+python -m scripts.event_rosters fetch --stage 'LCK/2026 Season/Season Play-In' --stage 'LCK/2026 Season/Season Playoffs' \
+  --stage 'LCK CL/2026 Season/Season Play-In' --stage 'LCK CL/2026 Season/Season Playoffs' --output "$w/holdout/wire/players.json"
+python -m scripts.event_rosters attach --games "$w/holdout/drafts.jsonl" --input-audit "$w/holdout/draft-audit.json" \
+  --archive .local/training/enriched.jsonl --catalog "$w/holdout/catalog.json" --players "$w/holdout/wire/players.json" \
+  --output "$w/holdout/games.jsonl" --audit "$w/holdout/audit.json"
 python - <<'PY'
 import json
 from pathlib import Path
