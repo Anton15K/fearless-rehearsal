@@ -51,7 +51,7 @@ When the event patch is unavailable, the watcher checks at most two compatible c
 
 ```sh
 python -m scripts.lec_pair_watch --freeze .local/role-pairs/freeze.json \
-  --output-dir .local/role-pairs/lec-winter
+  --team-archive .local/training/enriched.jsonl --output-dir .local/role-pairs/lec-winter
 ```
 
 On the project Mac, the login agent runs an initial schedule check and checks hourly January 13–15 UTC. It stops on a seal, a missed deadline or the end of opening day. The Mac must be logged in and awake during the collection window. The watcher records local status, and the receipt contains no champion rankings.
