@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from fearless.app_catalog import Match, MatchCatalog
+from fearless.app_catalog import Match, MatchCatalog, PROSPECTIVE_ID
 from fearless.app_error import RehearsalError
 from fearless.rules import (
     DRAFT_LENGTH,
@@ -18,9 +18,14 @@ from fearless.rules import (
 
 
 def create_catalog_plan(catalog: MatchCatalog, settings: dict) -> dict:
-    match = catalog.matches.get(settings.get("match_id"))
-    if match is None:
-        raise RehearsalError(404, "Match not found.")
+    if settings.get("match_id") == PROSPECTIVE_ID:
+        match = catalog.prospective(settings)
+    else:
+        if any(settings.get(field) is not None for field in ("teams", "coach_team", "date", "format")):
+            raise RehearsalError(422, "Choose New matchup to set the teams and series details.")
+        match = catalog.matches.get(settings.get("match_id"))
+        if match is None:
+            raise RehearsalError(404, "Match not found.")
     patch = settings.get("patch") or match.metadata["patch"]
     pool = catalog.pool(match, patch)
     if pool is None:
@@ -59,6 +64,8 @@ def new_plan(match: Match, pool: tuple[str, ...], settings: dict) -> dict:
         "format": meta["format"],
         "source": meta["source"],
         "provenance": meta.get("provenance"),
+        "team_history": meta.get("team_history"),
+        "roster_dates": meta.get("roster_dates"),
         "root_id": root,
         "selected_node": root,
         "nodes": [{
@@ -321,6 +328,8 @@ def public_plan(plan: dict) -> dict:
             "rosters", "brief",
         )},
         "provenance": plan.get("provenance"),
+        "team_history": plan.get("team_history"),
+        "coach_team": plan["coach_team"],
         "nodes": [{key: value for key, value in node.items() if key != "first"} for node in plan["nodes"]],
         "pins": evaluated_pins(plan, position_at(plan, plan["selected_node"]).games),
     }
@@ -362,8 +371,12 @@ def _public_roster_evidence(plan: dict, result: dict) -> dict:
             continue
         evidence = dict(status[team_id])
         if evidence.get("source") == "supplied" and name not in plan.get("roster_overrides", []):
-            evidence["source"] = "recorded_previous_game"
-            evidence["as_of"] = plan["date"]
+            if plan["source"] == PROSPECTIVE_ID:
+                evidence["source"] = "historical_team_roster"
+                evidence["as_of"] = plan["roster_dates"].get(name)
+            else:
+                evidence["source"] = "recorded_previous_game"
+                evidence["as_of"] = plan["date"]
         public[name] = evidence
     return public
 

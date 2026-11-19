@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from fearless.app_catalog import MatchCatalog
+from fearless.app_catalog import MatchCatalog, PROSPECTIVE_ID
 from fearless.app_error import RehearsalError
 from fearless.rehearsal import (
     advance_history,
@@ -78,5 +78,6 @@ def open_demo():
     if parameters.is_file():
         from fearless.public_model import SHOWCASE_SERIES, PublicForecaster
 
-        forecasts[SHOWCASE_SERIES] = PublicForecaster.load(parameters)
+        forecast = PublicForecaster.load(parameters)
+        forecasts = {SHOWCASE_SERIES: forecast, PROSPECTIVE_ID: forecast}
     return BrowserRehearsal(catalog, forecasts).request
