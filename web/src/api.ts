@@ -15,6 +15,10 @@ export type Match = {
 
 export type PlanInput = {
   match_id: string
+  teams?: [string, string]
+  coach_team?: string
+  date?: string
+  format?: 'Bo3' | 'Bo5'
   title?: string
   priority?: string
   target_game?: number
@@ -28,6 +32,7 @@ export type Bootstrap = {
   champions: string[]
   matches: Match[]
   default_match: string
+  patches?: string[]
 }
 
 export type Pin = {
@@ -68,6 +73,7 @@ export type Plan = PlanSummary & {
   target_game?: number
   player?: string
   coach_team?: string
+  team_history?: Record<string, { as_of: string } | null> | null
 }
 
 export type Suggestion = {

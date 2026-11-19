@@ -385,3 +385,21 @@ a { color: inherit }
   .board-inspector { display: contents }
   .outlook-panel { grid-row: 4 }
 }
+
+
+.new-match-option { min-height: 64px; justify-content: start; border-color: #426643 }
+.new-match-option > svg:last-child { margin-left: auto }
+.new-match-icon { display: grid; flex-shrink: 0; width: 36px; height: 36px; place-items: center; border: 1px solid #426643; border-radius: 4px; background: #213525; color: var(--accent) }
+.match-date-help { align-self: end; padding: 0 0 7px; font-size: 12px }
+.matchup-rosters { border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); padding: 8px 0 }
+.matchup-rosters summary { color: var(--secondary); font-size: 13px; cursor: pointer }
+.prep-panel .matchup-rosters .form-grid { padding: 10px 0 2px }
+.prospective-coach, .prospective-coverage { max-width: min(40vw, 430px); color: var(--muted); font-size: 12px; overflow-wrap: anywhere }
+.prospective-coach { color: var(--accent) }
+.match-context { min-width: 0 }
+.match-context > strong { max-width: min(45vw, 550px); overflow-wrap: anywhere }
+.team-label strong, .decision-header h2, .saved-plan > span { overflow-wrap: anywhere }
+.first-control select { max-width: 160px }
+@media (max-width: 620px) {
+  .match-context > strong, .prospective-coach, .prospective-coverage { max-width: 100% }
+}
