@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowLeftRight, ArrowRight, ArrowUpRight, ChevronRight, CircleDot, CircleHelp,
+  ArrowDown, ArrowLeftRight, ArrowRight, ArrowUpRight, Ban, ChevronRight, CircleDot, CircleHelp,
   Crosshair, GitBranch, GitCompareArrows, Link2, ListFilter, Lock, Pin as PinIcon,
   Play, Plus, ShieldCheck, Sparkles, Workflow,
 } from 'lucide-react'
@@ -57,6 +57,12 @@ export function Board({ plan, state, busy, chooseNode, commit, advance, openCust
           </div>
         </div>
         <DraftMatrix state={state} first={displayFirst} second={displaySecond} team={activeTeam} />
+        {plan.disabled && plan.disabled.length > 0 && (
+          <div className="lock-strip disabled-strip">
+            <div className="lock-strip-label"><Ban size={14} /><strong>Disabled for this series</strong></div>
+            <span className="lock-icons">{plan.disabled.join(', ')}</span>
+          </div>
+        )}
         <div className="lock-strip">
           <div className="lock-strip-label"><Lock size={14} /><strong>Fearless lockout</strong><span className="mono">{state.locked.length}</span></div>
           <div className="lock-icons" aria-label="Champions picked in earlier games">

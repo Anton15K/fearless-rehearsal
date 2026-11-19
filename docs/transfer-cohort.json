@@ -1,0 +1,17 @@
+{
+  "audit_sha256": "4933b1a0af0436e0a44259e1131b8792a600d1ad4f4ae65b264a6b0c3c35860b",
+  "ban_policy_sha256": "2e22a932d3ca6631b9b57e8fd5dd36c9f8770fb55b4d06bb001ccd529feaf9db",
+  "catalog_sha256": "c995705e97ff4554f5d5e8aac43a0859105b83d1258517c71aa737be34269636",
+  "confidence_sha256": "4fd69a34fdb491cb6056d99e68fc97a14d193364208154acfd700512f8be26c6",
+  "events": {
+    "CBLOL Split 2 Playoffs 2026": 32,
+    "LCP Promotion 2026": 18,
+    "LPL Split 2 Playoffs 2026": 68
+  },
+  "games": 118,
+  "incumbent_commit": "065ec4a7499b33f2e7049575bdd7fef777b402ee",
+  "parent_sha256": "46f237dc04829625c23141b3dd763b52ac102a7f0649e3c8fa03cb82c0a28a9b",
+  "prior_sha256": "a857dabd12740eb62425a0d7600cb2cf1e8ac71a929d9a536a2b91baacc9376d",
+  "series": 31,
+  "sha256": "654e8a55dce4d0ce58d021a6b8baff8a50b32acdc564445cb45c5b618b4b60ba"
+}

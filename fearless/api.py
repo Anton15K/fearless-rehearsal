@@ -111,7 +111,16 @@ def _forecaster(bundle: Path | None) -> Any:
                     from fearless.event_forecaster import EventForecaster
 
                     try:
-                        return EventForecaster.load(parent, bundle, policy, event_policy)
+                        adapted = EventForecaster.load(parent, bundle, policy, event_policy)
+                        transfer = os.environ.get("FEARLESS_TRANSFER")
+                        if transfer:
+                            try:
+                                from fearless.transfer_policy import TransferPolicy
+
+                                return TransferPolicy.load(adapted, bundle, event_policy, transfer)
+                            except Exception:
+                                LOGGER.exception("Could not load the transfer policy. Serving the verified event forecast.")
+                        return adapted
                     except Exception:
                         LOGGER.exception("Could not load event adaptation. Serving the verified parent policy.")
                 return parent

@@ -102,3 +102,51 @@ def test_duplicate_source_keys_stop_the_import(tables):
     tables["draft"].append(tables["draft"][0])
     with pytest.raises(ValueError, match="Duplicate GameId"):
         normalize(tables)
+
+
+@pytest.fixture
+def transfer_tables(tables):
+    for records in tables.values():
+        for row in records:
+            row["OverviewPage"] = "CBLOL/2026 Season/Split 2 Playoffs"
+    return tables
+
+
+def test_transfer_uses_recorded_first_pick_for_cblol(transfer_tables):
+    rows, audit = event_drafts.normalize(transfer_tables, [], [], {"16.14": CHAMPIONS},
+                                         cohort=event_drafts.TRANSFER)
+    assert len(rows) == 2
+    assert rows[0]["region"] == "LATAM"
+    stage = audit["stages"]["CBLOL/2026 Season/Split 2 Playoffs"]
+    assert stage["first_pick"] == {"source_recorded": 2, "accepted_recorded": 2}
+
+
+def test_transfer_excludes_emea_under_preregistered_first_pick_coverage_fallback(transfer_tables):
+    stage = "EMEA Masters/2026 Season/Summer Main Event"
+    for records in transfer_tables.values():
+        for row in records:
+            row["OverviewPage"] = stage
+    rows, audit = event_drafts.normalize(transfer_tables, [], [], {"16.14": CHAMPIONS},
+                                         cohort=event_drafts.TRANSFER)
+    assert rows == []
+    assert audit["stages"][stage]["source_games"] == 2
+    assert "first-pick" in audit["excluded"]["series"]
+
+
+def test_transfer_excludes_series_when_required_recorded_first_pick_is_missing(transfer_tables):
+    transfer_tables["schedule"][1]["FirstPick"] = ""
+    rows, audit = event_drafts.normalize(transfer_tables, [], [], {"16.14": CHAMPIONS},
+                                         cohort=event_drafts.TRANSFER)
+    assert rows == []
+    assert "first selection" in audit["excluded"]["series"]
+
+
+def test_transfer_checks_each_past_external_holdout(transfer_tables):
+    rows, _ = event_drafts.normalize(transfer_tables, [], [], {"16.14": CHAMPIONS},
+                                     cohort=event_drafts.TRANSFER)
+    duplicate = {**rows[0], "game_id": "known-previous-draft", "series_id": "previous-series"}
+    rows, audit = event_drafts.normalize(transfer_tables, [], [], {"16.14": CHAMPIONS},
+                                         cohort=event_drafts.TRANSFER, additional_previous=([duplicate],))
+    assert rows == []
+    assert "known-previous-draft" in audit["excluded"]["series"]
+    assert audit["overlap"]["previous_2"]["matched_source_games"] == 1

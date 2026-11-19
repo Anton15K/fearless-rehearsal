@@ -28,7 +28,7 @@ export function isPublicEstimate(forecast?: { method?: string | null; probabilit
 
 export function isEventEstimate(forecast?: { method?: string | null; model_source?: string; probability_quality?: string } | null) {
   return forecast?.model_source === 'private_event' && forecast.probability_quality === 'estimated'
-    && ['refreshed_pick', 'patch_pick_adaptation', 'mixed'].includes(forecast.method ?? '')
+    && ['refreshed_pick', 'patch_pick_adaptation', 'temperature_refreshed_pick', 'refreshed_opening_ban', 'refreshed_second_phase_ban', 'mixed'].includes(forecast.method ?? '')
 }
 
 export function modeledOutlook(outlook: Outlook | null | undefined) {

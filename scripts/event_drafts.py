@@ -1,8 +1,9 @@
-"""Build the preregistered 2026 MSI, LCP and LPL draft holdout."""
+"""Build a preregistered draft holdout from Leaguepedia and Riot sources."""
 from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+from dataclasses import dataclass, field
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -40,6 +41,57 @@ FEARLESS_SOURCES = {
         "https://weibo.com/lolesports",
     ],
 }
+EMEA_SUMMER = "EMEA Masters/2026 Season/Summer Main Event"
+EMEA_RULEBOOK = "https://cdn.sanity.io/files/dsfx7636/news_live/0a6df7b5c91f3e5dff63371c1f6ba74c2a5f5e79.pdf"
+LPL_SPLIT_2 = "LPL/2026 Season/Split 2 Playoffs"
+TRANSFER_STAGES = {
+    EMEA_SUMMER: ("EMEA Masters Summer 2026", "EMEA"),
+    "CBLOL/2026 Season/Split 2 Playoffs": ("CBLOL Split 2 Playoffs 2026", "LATAM"),
+    "LCP/2027 Season/Promotion": ("LCP Promotion 2026", "APAC"),
+    LPL_SPLIT_2: ("LPL Split 2 Playoffs 2026", "CN"),
+}
+TRANSFER_RULES = {
+    "EMEA": [
+        "https://www.emea-competitiveops.com/",
+        EMEA_RULEBOOK,
+        "https://lolesports.com/en-AU/results/117171782811211421/stage/117171782812259999",
+        "https://lolesports.com/en-US/results/117171782811211421/stage/117173038337693166",
+    ],
+    "LATAM": [
+        "https://static.wikia.nocookie.net/lolesports_gamepedia_en/images/7/7b/CBLOL_2026_Rulebook.pdf/revision/latest?cb=20260410173001",
+        "https://www.youtube.com/watch?v=BtM8Duut2xU",
+    ],
+    "APAC": [
+        "https://lolesports.com/en-PH/news/lcp-2026-promotion-series-everything-you-need-to-know",
+        "https://cdn.sanity.io/files/dsfx7636/news_live/443a65d616d58bbe9189b47e83eb505b61eb6122.pdf",
+        "https://cdn.sanity.io/files/dsfx7636/news_live/3fbf7c285d72ce06f7b10888278eb52fd9f06877.pdf",
+    ],
+    "CN": [
+        "https://lolesports.com/en-AU/season/115547545029543948/handbook/115548016979679445/league/98767991314006698",
+        "https://weibo.com/ttarticle/p/show?id=2309405305389620265001",
+        "https://lol.fandom.com/wiki/LPL/2026_Season/Split_2_Playoffs",
+    ],
+}
+
+
+@dataclass(frozen=True)
+class Cohort:
+    stages: dict[str, tuple[str, str]]
+    fearless_sources: dict[str, list[str]]
+    earliest: str
+    before: str | None = None
+    excluded_stages: dict[str, str] = field(default_factory=dict)
+    previous_holdouts: int = 1
+    query_limit: int = 500
+
+
+ROUND_ONE = Cohort(STAGES, FEARLESS_SOURCES, EARLIEST)
+TRANSFER = Cohort(
+    TRANSFER_STAGES, TRANSFER_RULES, "2026-05-23", before="2026-11-19", previous_holdouts=2, query_limit=400,
+    excluded_stages={EMEA_SUMMER: "Excluded by the first-pick coverage gate. The event has under 50 verifiable "
+                                  "games and its archived draft order conflicts with the published blue-first rule."},
+)
+COHORTS = {"round-one": ROUND_ONE, "transfer": TRANSFER}
 TEAM_ALIASES = {name.casefold(): official for name, official in ALIASES.items()}
 PATCH_LABEL = re.compile(r"\d+\.\d+")
 PASSED_BANS = ("none", "no ban")
@@ -50,18 +102,18 @@ def wiki_page(name):
     return WIKI + quote(name.replace(" ", "_"))
 
 
-def cargo_query(key):
+def cargo_query(key, cohort=ROUND_ONE):
     table, fields = TABLES[key]
-    pages = ",".join(f"'{stage}'" for stage in STAGES)
+    pages = ",".join(f"'{stage}'" for stage in cohort.stages)
     return dict(action="cargoquery", format="json", tables=table, fields="OverviewPage," + fields,
-                where=f"OverviewPage IN ({pages})", limit=500)
+                where=f"OverviewPage IN ({pages})", limit=cohort.query_limit)
 
 
-def cached_table(directory, key):
+def cached_table(directory, key, cohort=ROUND_ONE):
     path = directory / f"{key}.json"
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
-    request = Request(CARGO + "?" + urlencode(cargo_query(key)),
+    request = Request(CARGO + "?" + urlencode(cargo_query(key, cohort)),
                       headers={"User-Agent": "FearlessRehearsal/1.0 (registered holdout research)"})
     for delay in (2, 7, 15, 30, 60):
         try:
@@ -73,7 +125,7 @@ def cached_table(directory, key):
         else:
             if "cargoquery" in payload:
                 records = [entry["title"] for entry in payload["cargoquery"]]
-                if not 0 < len(records) < 500:
+                if not 0 < len(records) < cohort.query_limit:
                     raise ValueError(f"Unexpected row count in {key} Cargo table: {len(records)}")
                 path.write_text(json.dumps(records, sort_keys=True), encoding="utf-8")
                 return records
@@ -168,9 +220,9 @@ def overlaps(source, reference, catalog):
                          pick_only_fingerprints=len(partial_picks), matched_source_games=len(matched))
 
 
-def normalize(tables, archive, previous, patches):
+def normalize(tables, archive, previous, patches, *, cohort=ROUND_ONE, additional_previous=()):
     for key, records in tables.items():
-        if any(row["OverviewPage"] not in STAGES for row in records):
+        if any(row["OverviewPage"] not in cohort.stages for row in records):
             raise ValueError(f"Unexpected stage outside the preregistered {key} table scope")
     score, durations, drafts, selections = [
         keyed(tables[key], "GameId") for key in ("score", "duration", "draft", "schedule")
@@ -191,7 +243,9 @@ def normalize(tables, archive, previous, patches):
     source = [(row, *source_fingerprints(drafts.get(key, {}), catalog)) for key, row in score.items()]
     history = prior_teams(archive)
     matched, audit = {}, {}
-    for label, reference in (("archive", archive), ("previous", previous)):
+    references = {"archive": archive, "previous": previous}
+    references.update({f"previous_{index}": rows for index, rows in enumerate(additional_previous, 2)})
+    for label, reference in references.items():
         matched[label], audit[label] = overlaps(source, reference, catalog)
     # Every member of an internal duplicate group is suspect.
     by_draft = defaultdict(list)
@@ -205,7 +259,10 @@ def normalize(tables, archive, previous, patches):
     rows, excluded = [], {}
     for sid, meta in metadata.items():
         stage = meta["OverviewPage"]
-        event, region = STAGES[stage]
+        if stage in cohort.excluded_stages:
+            excluded[sid] = cohort.excluded_stages[stage]
+            continue
+        event, region = cohort.stages[stage]
         series_games = games[sid]
         try:
             if not series_games:
@@ -223,7 +280,9 @@ def normalize(tables, archive, previous, patches):
                     raise ValueError(f"missing competitive patch for {key}")
             known = team_ids(series_games, drafts, history)
             records = parse_series(meta, series_games, drafts, selections, patches, known,
-                                   earliest=EARLIEST, region=region)
+                                   earliest=cohort.earliest, region=region)
+            if cohort.before and any(evidence_date(game) >= cohort.before for game in records):
+                raise ValueError("series completes outside the registered period")
             for game in records:
                 draft = drafts[game["game_id"]]
                 game.update(event=event, stage=stage,
@@ -236,13 +295,13 @@ def normalize(tables, archive, previous, patches):
             rows.extend(records)
     rows.sort(key=lambda row: (row["drafted_at"], row["series_id"], row["game_number"]))
     stage_report = {}
-    for stage, (event, region) in STAGES.items():
+    for stage, (event, region) in cohort.stages.items():
         accepted = [game for game in rows if game["stage"] == stage]
         team_names = {team: name for game in accepted for team, name in game["team_names"].items()}
         external_teams = {team: wiki_page(team.removeprefix(EXTERNAL)) for team in team_names if team.startswith(EXTERNAL)}
         stage_patches = sorted({game["patch"] for game in accepted}, key=lambda patch: tuple(map(int, patch.split("."))))
         stage_report[stage] = dict(
-            event=event, region=region, source_page=wiki_page(stage), fearless_sources=FEARLESS_SOURCES[region],
+            event=event, region=region, source_page=wiki_page(stage), fearless_sources=cohort.fearless_sources[region],
             source_games=sum(row["OverviewPage"] == stage for row in score.values()),
             source_series=sum(row["OverviewPage"] == stage for row in metadata.values()),
             games=len(accepted), series=len({game["series_id"] for game in accepted}),
@@ -250,6 +309,18 @@ def normalize(tables, archive, previous, patches):
             archive_team_ids=len(team_names) - len(external_teams), external_team_ids=len(external_teams),
             external_team_sources=external_teams,
         )
+        if cohort is not ROUND_ONE:
+            source_keys = [key for key, row in score.items() if row["OverviewPage"] == stage]
+            stage_report[stage]["first_pick"] = dict(
+                source_recorded=sum(bool(selections.get(key, {}).get("FirstPick")) for key in source_keys),
+                accepted_recorded=len(accepted),
+            )
+            if stage in cohort.excluded_stages:
+                stage_report[stage]["exclusion"] = cohort.excluded_stages[stage]
+                stage_report[stage]["draft_team1_disagrees_with_blue"] = sum(
+                    drafts[key]["Team1"] != selections[key]["Blue"]
+                    for key in source_keys if key in drafts and key in selections
+                )
     return rows, dict(
         source_games=len(score), source_series=len(metadata), games=len(rows),
         series=len({game["series_id"] for game in rows}), excluded=excluded, stages=stage_report, overlap=audit,
@@ -263,23 +334,34 @@ def read_jsonl(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("archive", "previous", "catalog", "cache", "output", "audit"):
+    for name in ("archive", "catalog", "cache", "output", "audit"):
         parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--previous", type=Path, action="append", required=True, help="External reference JSONL, repeatable")
+    parser.add_argument("--cohort", choices=COHORTS, default="round-one")
     args = parser.parse_args()
+    cohort = COHORTS[args.cohort]
+    if len({path.resolve() for path in args.previous}) != len(args.previous):
+        parser.error("Each previous holdout must be distinct.")
+    if len(args.previous) < cohort.previous_holdouts:
+        parser.error(f"The {args.cohort} cohort requires {cohort.previous_holdouts} previous holdouts.")
+    input_paths = {"archive": args.archive, "previous": args.previous[0], "catalog": args.catalog}
+    input_paths.update({f"previous_{index}": path for index, path in enumerate(args.previous[1:], 2)})
     args.cache.mkdir(parents=True, exist_ok=True)
-    tables = {key: cached_table(args.cache, key) for key in TABLES}
+    tables = {key: cached_table(args.cache, key, cohort) for key in TABLES}
     for key, records in tables.items():
-        if {row["OverviewPage"] for row in records} != STAGES.keys():
+        if {row["OverviewPage"] for row in records} != cohort.stages.keys():
             raise ValueError(f"Incomplete preregistered stage sets in {key} Cargo table")
     patches = json.loads(args.catalog.read_text(encoding="utf-8"))
-    rows, report = normalize(tables, read_jsonl(args.archive), read_jsonl(args.previous), patches)
+    previous, *additional_previous = map(read_jsonl, args.previous)
+    rows, report = normalize(tables, read_jsonl(args.archive), previous, patches, cohort=cohort,
+                             additional_previous=additional_previous)
     if not rows:
         raise ValueError("No complete eligible series")
     data = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows).encode("utf-8")
     report.update(
         source="Leaguepedia, CC BY-SA 3.0",
         provenance=dict(
-            cargo_url=CARGO, cargo_queries={key: cargo_query(key) for key in TABLES},
+            cargo_url=CARGO, cargo_queries={key: cargo_query(key, cohort) for key in TABLES},
             first_selection_rules=RIOT_FIRST_SELECTION,
             fearless_replay="Both teams' prior completed picks are unavailable in subsequent games.",
             timestamps="ScoreboardGames UTC start and game length; draft and completion time estimates.",
@@ -288,10 +370,18 @@ def main():
                      for patch in patches},
         ),
         hashes={f"{key}.json": sha256((args.cache / f"{key}.json").read_bytes()).hexdigest() for key in TABLES},
-        input_hashes={label: sha256(getattr(args, label).read_bytes()).hexdigest()
-                      for label in ("archive", "previous", "catalog")},
+        input_hashes={label: sha256(path.read_bytes()).hexdigest() for label, path in input_paths.items()},
         sha256=sha256(data).hexdigest(),
     )
+    if args.cohort != "round-one":
+        report["cohort"] = args.cohort
+    if args.cohort == "transfer":
+        report["fallback"] = {
+            "coverage_threshold_games": 50,
+            "excluded_stage": EMEA_SUMMER,
+            "replacement_stage": LPL_SPLIT_2,
+            "replacement_start_date": TRANSFER.earliest,
+        }
     for path in (args.output, args.audit):
         path.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(data)

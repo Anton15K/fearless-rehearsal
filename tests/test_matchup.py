@@ -154,10 +154,23 @@ def test_public_browser_and_server_limit_estimates_to_dates_after_validation(tmp
 def test_prospective_removes_match_specific_disables_from_every_branch(app_and_forecaster):
     app, _ = app_and_forecaster
     with TestClient(app) as client:
-        response = client.post("/api/plans", json={**MATCHUP, "disabled": ["pOpPy"]})
+        response = client.post("/api/plans", json={
+            **MATCHUP, "event": "Regional Playoffs", "disabled": ["pOpPy", "Poppy"],
+        })
         response.raise_for_status()
         plan = response.json()
-        path = f"/api/plans/{plan['id']}/nodes/{plan['selected_node']}"
-        assert "Poppy" not in client.get(path).json()["legal"]
+        assert plan["event"] == "Regional Playoffs"
+        assert plan["disabled"] == ["Poppy"]
+
+        plan_path = f"/api/plans/{plan['id']}"
+        branch = client.post(f"{plan_path}/actions", json={
+            "parent_id": plan["selected_node"], "champion": "Vi",
+        })
+        branch.raise_for_status()
+        reopened = client.get(plan_path).json()
+        assert reopened["event"] == "Regional Playoffs"
+        assert reopened["disabled"] == ["Poppy"]
+        for node_id in (plan["root_id"], reopened["selected_node"]):
+            assert "Poppy" not in client.get(f"{plan_path}/nodes/{node_id}").json()["legal"]
         invalid = client.post("/api/plans", json={**MATCHUP, "disabled": ["Unknown Champion"]})
         assert invalid.status_code == 422

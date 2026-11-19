@@ -30,16 +30,18 @@ def create_catalog_plan(catalog: MatchCatalog, settings: dict) -> dict:
     pool = catalog.pool(match, patch)
     if pool is None:
         raise RehearsalError(422, "The champion catalog does not include that patch.")
+    disabled = ()
     if settings.get("disabled"):
         by_name = {c.casefold(): c for c in pool}
         names = {name.casefold().strip() for name in settings["disabled"]}
         if not names <= by_name.keys() or names == by_name.keys():
             raise RehearsalError(422, "Choose disabled champions from this patch and leave champions available.")
+        disabled = tuple(by_name[name] for name in sorted(names))
         pool = tuple(c for c in pool if c.casefold() not in names)
-    return new_plan(match, pool, settings)
+    return new_plan(match, pool, settings, disabled=disabled)
 
 
-def new_plan(match: Match, pool: tuple[str, ...], settings: dict) -> dict:
+def new_plan(match: Match, pool: tuple[str, ...], settings: dict, *, disabled: tuple[str, ...] = ()) -> dict:
     meta = match.metadata
     patch = settings.get("patch") or meta["patch"]
     first = settings.get("first") or meta["first"]
@@ -64,6 +66,7 @@ def new_plan(match: Match, pool: tuple[str, ...], settings: dict) -> dict:
         "id": uuid4().hex,
         "match_id": meta["id"],
         "event": meta.get("event"),
+        "disabled": list(disabled),
         "title": settings.get("title") or meta["title"],
         "teams": meta["teams"],
         "patch": patch,
@@ -334,6 +337,8 @@ def public_plan(plan: dict) -> dict:
             "date", "format", "root_id", "selected_node", "priority", "target_game", "player",
             "rosters", "brief",
         )},
+        "event": plan.get("event"),
+        "disabled": plan.get("disabled", []),
         "provenance": plan.get("provenance"),
         "team_history": plan.get("team_history"),
         "coach_team": plan["coach_team"],
@@ -413,7 +418,10 @@ def _probability_quality(result: dict) -> str | None:
     if (
         result.get("probability_quality") == "estimated" and (
             (result.get("model_source") == "public" and result.get("method") == "public_frequencies")
-            or (result.get("model_source") == "private_event" and result.get("method") in ("refreshed_pick", "patch_pick_adaptation"))
+            or (result.get("model_source") == "private_event" and result.get("method") in (
+                "refreshed_pick", "patch_pick_adaptation", "temperature_refreshed_pick",
+                "refreshed_opening_ban", "refreshed_second_phase_ban",
+            ))
         )
     ):
         return "estimated"
@@ -500,7 +508,7 @@ def node_state(plan: dict, node_id: str, forecaster: Any = None, frequencies: An
             if quality == "calibrated":
                 source += " · calibrated for named champion actions"
             elif result.get("model_source") == "private_event" and quality == "estimated":
-                source = f"Tournament pick estimate · evidence through {result['as_of']}"
+                source = f"Tournament {pos.kind} estimate · evidence through {result['as_of']}"
             elif quality == "estimated":
                 source = f"Open LCS draft estimate · training through {result['as_of']}"
             forecast = {

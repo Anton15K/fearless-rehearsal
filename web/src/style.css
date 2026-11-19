@@ -80,7 +80,9 @@ a { color: inherit }
 .match-context > strong { font: 600 26px/1 var(--display); letter-spacing: .025em }
 .source-label { display: inline-flex; align-items: center; gap: 6px; color: var(--amber); font: 500 10px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .07em }
 .source-historical { color: var(--blue) }
-.context-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: 8px; color: var(--muted); font: 11px var(--mono) }
+.match-event, .context-meta { color: var(--muted); font: 11px var(--mono) }
+.match-event { max-width: 100%; overflow-wrap: anywhere }
+.context-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: 8px }
 .context-meta span + span::before { content: "·"; margin-right: 8px; color: #68756d }
 
 .panel { min-width: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--panel) }
@@ -149,6 +151,7 @@ a { color: inherit }
 .slot-next { border-color: #759763; background: #243520; color: var(--accent); box-shadow: 0 0 9px #9ded6c11 }
 .slot-dash { color: #667871 }
 .lock-strip { display: flex; align-items: center; gap: 12px; min-height: 43px; border-top: 1px solid var(--line-soft); padding: 6px 17px; background: #111617; border-radius: 0 0 9px 9px }
+.disabled-strip { border-radius: 0 }
 .lock-strip-label { display: flex; align-items: center; gap: 7px; color: var(--secondary); white-space: nowrap; font-size: 12px }
 .lock-strip-label svg { color: var(--amber) }
 .lock-strip-label .mono { padding: 2px 5px; border: 1px solid #483a2d; border-radius: 3px; background: #2a231c; color: var(--amber); font-size: 10px }
