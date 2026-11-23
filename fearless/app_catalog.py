@@ -1,6 +1,6 @@
 """Local match settings and a deliberately small, entirely authored demo."""
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date
 import json
@@ -10,6 +10,7 @@ import re
 from fearless.app_directory import TeamDirectory, team_key
 from fearless.app_forecast import HistoricalFrequencies
 from fearless.app_error import RehearsalError
+from fearless.event_series import utc
 from fearless.rules import DRAFT_LENGTH, DraftAction, schedule, series_locks, validate_action
 
 
@@ -106,7 +107,7 @@ def _demo() -> Match:
     )
 
 
-def _series_matches(games: list[dict], catalog: dict[str, tuple[str, ...]]) -> list[Match]:
+def _series_matches(games: list[dict], catalog: dict[str, tuple[str, ...]] | None) -> list[Match]:
     grouped = defaultdict(list)
     for row in games:
         series = str(row.get("series_id", ""))
@@ -199,18 +200,65 @@ def _recorded_sides(sides, team_names):
     return {}
 
 
-def _series_match(series_id: str, rows: list[dict], catalog: dict[str, tuple[str, ...]]) -> Match | None:
+def _series_format(series_id: str, rows: list[dict]) -> str:
+    formats = {row["format"] for row in rows if row.get("format") is not None}
+    formats.update(f"Bo{row['best_of']}" for row in rows if row.get("best_of") is not None)
+    if len(formats) > 1:
+        raise ValueError("Conflicting historical series formats.")
+    return next(iter(formats)) if formats else HISTORICAL_SERIES[series_id]
+
+
+def _validate_game_order(rows: list[dict], teams: set[str], best_of: int) -> None:
+    wins = Counter()
+    clinch = best_of // 2 + 1
+    previous_date = previous_start = previous_finish = None
+    for index, row in enumerate(rows, 1):
+        if {row["first"], row["second"]} != teams:
+            raise ValueError("The same teams must appear in every game.")
+        winner = row.get("winner")
+        if winner is not None:
+            if winner not in teams:
+                raise ValueError("The game winner must be one of the teams.")
+            wins[winner] += 1
+            if wins[winner] >= clinch and index < len(rows):
+                raise ValueError("The series was clinched before the final recorded game.")
+
+        game_date = date.fromisoformat(row["date"])
+        if previous_date is not None and game_date < previous_date:
+            raise ValueError("Historical game dates are out of order.")
+        previous_date = game_date
+
+        drafted, started, finished = (
+            utc(row[key]) if row.get(key) is not None else None
+            for key in ("drafted_at", "started_at", "finished_at")
+        )
+        if drafted and started and started < drafted:
+            raise ValueError("A game started before its draft.")
+        start = drafted or started
+        if start and (
+            (previous_start and start <= previous_start) or (previous_finish and start < previous_finish)
+        ):
+            raise ValueError("Historical game starts are out of order.")
+        latest_start = started or drafted or previous_start
+        if finished and (
+            (latest_start and finished <= latest_start) or (previous_finish and finished <= previous_finish)
+        ):
+            raise ValueError("Historical game finishes are out of order.")
+        previous_start = latest_start
+        previous_finish = finished or previous_finish
+
+
+def _series_match(series_id: str, rows: list[dict], catalog: dict[str, tuple[str, ...]] | None) -> Match | None:
     rows.sort(key=lambda row: row["game_number"])
     if not rows or [row["game_number"] for row in rows] != list(range(1, len(rows) + 1)):
         return None
     earlier = rows[0]
-    game_format = earlier.get("format") or (
-        f"Bo{earlier['best_of']}" if earlier.get("best_of") else HISTORICAL_SERIES[series_id]
-    )
+    game_format = _series_format(series_id, rows)
     if game_format not in {"Bo1", "Bo3", "Bo5"}:
         return None
-    opening_game = 1 if game_format == "Bo1" else 2
-    if not opening_game <= len(rows) <= int(game_format[-1]):
+    best_of = int(game_format[-1])
+    opening_game = 1 if best_of == 1 else 2
+    if not opening_game <= len(rows) <= best_of:
         return None
     opening = rows[opening_game - 1]
     fearless = earlier.get("fearless", True)
@@ -220,14 +268,18 @@ def _series_match(series_id: str, rows: list[dict], catalog: dict[str, tuple[str
     if len(team_ids) != 2:
         return None
     team_names = {team: name for name, team in team_ids.items()}
+    _validate_game_order(rows, set(team_names), best_of)
     replay = {}
     completed = []
     for row in rows:
         first, second = team_names[row["first"]], team_names[row["second"]]
         patch = row["patch"]
+        if not isinstance(patch, str) or not patch or (catalog is not None and patch not in catalog):
+            return None
+        pool = DEMO_POOL if catalog is None else catalog[patch]
         game_date = date.fromisoformat(row["date"]).isoformat()
         ruleset = ruleset_for(row.get("event"), game_date)
-        selected = eligibility(catalog.get(patch, DEMO_POOL), patch, ruleset,
+        selected = eligibility(pool, patch, ruleset,
                                recorded=row.get("disabled"), source=row.get("disabled_source") or row.get("source"),
                                historical=True)
         locked = series_locks(completed, fearless=fearless)
@@ -288,6 +340,7 @@ class MatchCatalog:
             patch: tuple(sorted(set(names), key=str.casefold))
             for patch, names in raw.items()
         }
+        self._historical_patches = self.patches if champions is not None else None
         self.matches = {DEMO_ID: _demo()}
         history = []
         self.teams = TeamDirectory()
@@ -297,7 +350,7 @@ class MatchCatalog:
             with path.open(encoding="utf8") as source:
                 rows = [json.loads(line) for line in source if line.strip()]
             self.matches.update({
-                match.metadata["id"]: match for match in _series_matches(rows, self.patches)
+                match.metadata["id"]: match for match in _series_matches(rows, self._historical_patches)
             })
             self.teams.add(rows, preferred=path == games)
             history.extend(rows)
@@ -309,7 +362,7 @@ class MatchCatalog:
         if patch == DEMO_PATCH and match.metadata["source"] == "illustrative":
             return DEMO_POOL
         pool = self.patches.get(patch)
-        if pool is None and patch == match.metadata["patch"]:
+        if pool is None and self._historical_patches is None and patch == match.metadata["patch"]:
             return DEMO_POOL
         return pool
 

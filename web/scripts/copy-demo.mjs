@@ -18,6 +18,7 @@ const sourceFiles = [
   'fearless/app_error.py',
   'fearless/app_forecast.py',
   'fearless/browser.py',
+  'fearless/event_series.py',
   'fearless/outlook.py',
   'fearless/rehearsal.py',
   'fearless/rules.py',
