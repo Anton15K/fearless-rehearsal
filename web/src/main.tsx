@@ -188,7 +188,7 @@ function App() {
             {view === 'board' && plan?.priority && <p className="priority-line"><CircleDot size={14} />{plan.priority}</p>}
           </div>
           {plan && <div className="match-context">
-            {(historical || scenario === 'illustrative') && <span className={`source-label ${historical ? 'source-historical' : ''}`}><Radio size={12} /> {historical ? (current?.history ? 'Historical replay' : 'Historical match · Rehearsal') : 'Illustrative scenario'}</span>}
+            {(historical || scenario === 'illustrative') && <span className={`source-label ${historical ? 'source-historical' : ''}`}><Radio size={12} /> {historical ? (current?.progression === 'hypothetical' ? 'Historical match · Rehearsal' : 'Historical replay') : 'Illustrative scenario'}</span>}
             {prospective && plan.coach_team && <span className="prospective-coach">Your team · {plan.coach_team}</span>}
             <strong>{match?.title || plan.title}</strong>
             {plan.event && <span className="match-event">{plan.event}</span>}
