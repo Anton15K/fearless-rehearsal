@@ -240,3 +240,23 @@ def test_opening_ban_invariance_includes_observed_passes(monkeypatch):
     args = SimpleNamespace(bundle=None, policy=None, games=None, catalog=None)
     with pytest.raises(ValueError, match="Opening ban"):
         compare_challengers.score(args)
+
+
+def test_importer_preserves_map_and_independent_game_winners(series):
+    series.metadata.update(Team1="Dignitas", Team2="Cloud9")
+    for row in series.games:
+        row["WinTeam"] = "Dignitas"
+    first, second = _parse(series)
+    assert first["best_of"] == 3
+    assert first["sides"] == {"c9": "red", "dig": "blue"}
+    assert first["winner"] == second["winner"] == "dig"
+    series.games[1]["WinTeam"] = "Cloud9"
+    with pytest.raises(ValueError, match="score"):
+        _parse(series)
+
+
+def test_importer_rejects_four_game_tie_in_best_of_three(series):
+    series.metadata.update(Team1Score="2", Team2Score="2")
+    series.games += [dict(series.games[-1], number=str(i)) for i in (3, 4)]
+    with pytest.raises(ValueError, match="score"):
+        _parse(series)

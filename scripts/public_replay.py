@@ -43,6 +43,8 @@ def main():
         result.append({
             "series_id":game["series_id"], "game_id":match_id, "game_number":int(game["game_number"]),
             "date":game["start_time_utc"][:10], "patch":f"16.{int(game['patch']) % 100}",
+            "sides":{game["blue_team"]:"blue", game["red_team"]:"red"},
+            "winner":game[game["winner_side"] + "_team"] if game["winner_side"] in ("blue", "red") else None,
             "event":game["tournament_name"], "region":"NA", "first":first,"second":second,
             "team_names":{first:first,second:second},"actions":draft,"rosters":{},"fearless":True,
             "eligible":True, "finished":True, "source":"Leaguepedia / LoL-Draft (CC BY-SA 4.0)"

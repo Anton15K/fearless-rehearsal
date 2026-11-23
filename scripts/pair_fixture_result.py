@@ -36,7 +36,7 @@ class PendingResult(Exception):
 def cargo_row(key, where):
     table, fields = TABLES[key]
     if key == "series":
-        fields += ",Team1,Team2,DateTime_UTC=start"
+        fields += ",DateTime_UTC=start"
     query = urlencode(dict(action="cargoquery", format="json", tables=table,
                            fields="OverviewPage," + fields, where=where, limit=2))
     request = Request(CARGO + "?" + query, headers={"User-Agent": "FearlessRehearsal/1.0 fixture verification"})

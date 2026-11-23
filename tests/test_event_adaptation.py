@@ -92,3 +92,11 @@ def test_attached_player_evidence_matches_both_revealed_drafts_and_uses_only_ear
     assert attach(g, players[:-1], catalog, known) is g
     players[0]["Champion"] = players[-1]["Champion"]
     assert attach(g, players, catalog, known) is g
+
+
+def test_completed_series_validates_best_of_and_game_results(rows):
+    with pytest.raises(ValueError, match="series"):
+        completed_series([dict(g, best_of=1) for g in rows[:2]])
+    with pytest.raises(ValueError, match="series"):
+        completed_series([dict(g, best_of=3, winner=g[k]) for g, k in zip(rows[:2], ("first", "second"))])
+    assert len(completed_series([dict(g, best_of=3, winner=g["first"]) for g in rows[:2]])) == 1
