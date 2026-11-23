@@ -4,7 +4,7 @@ import type { Outlook } from './outlook'
 export type SelectionPolicy = 'first_selection' | 'blue_first' | 'organizer'
 export type DraftMode = 'fearless' | 'standard'
 export type RuleProfile = { id: string; label: string; source?: string | null }
-export type Restriction = { champion: string; reason: string; source?: string | null }
+export type Restriction = { champion: string; reason: string; source?: string | null; release_source?: string }
 export type Selection = {
   first: string
   blue: string | null

@@ -64,19 +64,20 @@ export function Board({ plan, state, busy, chooseNode, commit, selectGame, recor
           </div>
         </div>
         <DraftMatrix state={state} first={state.first} second={state.second} team={state.team} />
-        {(atOpening || eligible.length > 0 || state.restriction_status === 'unknown') && <details className="game-eligibility">
+        <details className="game-eligibility">
           <summary>Champion eligibility{eligible.length > 0 && ` · ${eligible.length} disabled`}</summary>
-          <p className="muted">{state.effective_pool_size} eligible champions. {state.ruleset === 'lec-2026' ? '2026 LEC release rules apply. Enter organizer decisions for reworks or temporary disables.' : 'Enter any additional organizer restrictions for this game.'}</p>
+          <p className="muted">{state.effective_pool_size} champions eligible before draft bans and series locks. {state.ruleset === 'lec-2026' && 'The 2026 LEC release rule applies. The organizer decides rework eligibility and temporary disables.'}</p>
           {eligible.length > 0 && <ul>{eligible.map(row => <li key={row.champion + row.reason}>
             <strong>{row.champion}</strong> · {row.reason.replaceAll('_', ' ')}
-            {row.source?.startsWith('https://') && <> · <a href={row.source} target="_blank" rel="noreferrer">Source</a></>}
+            {row.source?.startsWith('https://') && <> · <a href={row.source} target="_blank" rel="noreferrer">{row.reason === 'release_patch' ? 'Rulebook' : 'Source'}</a></>}
+            {row.release_source && <> · <a href={row.release_source} target="_blank" rel="noreferrer">Patch notes</a></>}
           </li>)}</ul>}
           {state.restriction_status === 'unknown' && <p className="muted">Organizer restrictions were unavailable for this game.</p>}
           {atOpening && <form onSubmit={e => { e.preventDefault(); selectGame({ first: state.first, blue: state.blue, disabled: splitChampions(extraDisables) }) }}>
             <label className="field">Additional organizer disables<input value={extraDisables} onChange={e => setExtraDisables(e.target.value)} placeholder="Champion names, separated by commas" /></label>
             <button type="submit" className="button button-small button-secondary" disabled={busy}>Apply restrictions</button>
           </form>}
-        </details>}
+        </details>
         {standard ? <div className="lock-strip"><strong>Standard draft</strong><span className="muted">Earlier picks return to the pool each game.</span></div> : <div className="lock-strip">
           <div className="lock-strip-label"><Lock size={14} /><strong>Fearless lockout</strong><span className="mono">{state.locked.length}</span></div>
           <div className="lock-icons" aria-label="Champions picked in earlier games">
