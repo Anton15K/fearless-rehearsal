@@ -266,6 +266,15 @@ def position_at(plan: dict, node_id: str) -> Position:
     while cursor:
         path.append(cursor)
         cursor = nodes.get(cursor["parent_id"])
+    # A recorded result fixes one confirmed draft for the series. Sibling
+    # variations stay available for preparation, even after a later game ends.
+    confirmed_id = plan.get("confirmed_result_id")
+    off_confirmed_path = False
+    if confirmed_id and confirmed_id not in {node["id"] for node in path}:
+        cursor = nodes[confirmed_id]
+        while cursor and cursor["id"] != node_id:
+            cursor = nodes.get(cursor["parent_id"])
+        off_confirmed_path = cursor is None
     opening = path.pop()
     first, blue = opening["first"], opening.get("blue")
     selection_right, selection_choice = opening.get("selection_right"), opening.get("selection_choice")
@@ -295,7 +304,7 @@ def position_at(plan: dict, node_id: str) -> Position:
     second = _opponent(teams, first)
     games = [*previous, [_action(action) for action in actions]]
     recorded = _matching_replay(plan, game, first, blue, games) if progression == "historical" else None
-    if progression == "historical" and not recorded:
+    if (progression == "historical" and not recorded) or (progression == "actual" and off_confirmed_path):
         progression = "hypothetical"
     score = {team: sum(winner == team for winner in winners.values()) for team in teams}
     max_game = int(plan["format"][-1])
@@ -460,12 +469,17 @@ def record_result(plan: dict, parent_id: str, winner: str, *, historical: bool =
         raise RehearsalError(409, "A result can only be recorded after the corresponding draft is complete.")
     _check_team(plan["teams"], winner, "Winner")
     for node in plan["nodes"]:
-        if node["parent_id"] == parent_id and node["kind"] == "result" and node["team"] != winner:
-            raise RehearsalError(409, "A different result is already recorded for this draft.")
+        if node["parent_id"] == parent_id and node["kind"] == "result":
+            if node["team"] != winner:
+                raise RehearsalError(409, "A different result is already recorded for this draft.")
+            plan["selected_node"] = node["id"]
+            return
     _select_child(
         plan, parent_id, game=pos.game, first=pos.first, team=winner, kind="result", champion=None,
         origin="historical" if historical else "rehearsal",
     )
+    if not historical:
+        plan["confirmed_result_id"] = plan["selected_node"]
 
 
 def advance_history(plan: dict, parent_id: str) -> None:

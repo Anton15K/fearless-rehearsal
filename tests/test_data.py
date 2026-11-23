@@ -104,6 +104,22 @@ class GridImportTest(unittest.TestCase):
         self.assertEqual((record["patch"], record["region"], record["ruleset"]), ("16.7", "EMEA", "fearless"))
         self.assertEqual(audit["eligible_games"], 1)
 
+    def test_finished_game_winner_and_best_of_use_recorded_evidence(self):
+        final = game(1, actions("One"))
+        final["teams"][1]["won"] = True
+        ended = event("grid-ended-feed", "", state=[final])
+        ended["seriesState"]["format"] = "best-of-3"
+        self.write_feed([envelope(1, ended)])
+        records, _ = import_grid(self.root)
+        self.assertEqual((records[0]["winner"], records[0]["best_of"]), ("B", 3))
+
+        write_csv(self.root / "meta/games.csv", [{
+            "title": "lol", "series_id": "s1", "game_id": "g1", "winner_team_id": "A",
+        }])
+        records, _ = import_grid(self.root)
+        self.assertIsNone(records[0]["winner"])
+        self.assertIn("conflicting_game_winner", records[0]["issues"])
+
     def test_events_deduplicate_undo_and_discard_rolled_back_game(self):
         first, second = list(actions("One")), list(actions("Two", first="B"))
         temporary = {**second[0], "draftable": {"id": "temp", "name": "Temporary"}}

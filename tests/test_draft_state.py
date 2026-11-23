@@ -134,6 +134,19 @@ def test_confirmed_results_control_loser_selection_and_clinching(board):
     }).status_code == 409
 
 
+def test_result_confirms_one_draft_and_turns_other_prepared_openings_into_hypotheses(board):
+    url, root = matchup(board)
+    alternative = choose(board, url, root, first="Beta", blue="Alpha")
+    game1 = draft(board, url, root)
+    result = winner(board, url, game1["node_id"], "Alpha")
+    alternate_draft = draft(board, url, alternative)
+    assert alternate_draft["progression"] == "hypothetical"
+    assert board.post(f"{url}/result", json={
+        "parent_id": alternate_draft["node_id"], "winner": "Beta",
+    }).status_code == 409
+    assert state(board, url, result)["score"] == {"Alpha": 1, "Beta": 0}
+
+
 def test_decider_still_requires_a_result_and_next_first_pick_is_independent(board):
     url, root = matchup(board)
     game1 = draft(board, url, root)
