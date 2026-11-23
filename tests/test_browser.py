@@ -55,6 +55,7 @@ def test_browser_reopens_selection_result_and_legacy_fixture():
     legacy = request("/plans", {"match_id": demos["default_match"]})
     del stored[0]["prior_winners"]
     del stored[0]["draft_mode"]
+    del stored[0]["selection_policy"]
     del stored[0]["nodes"][0]["blue"]
     old_opening = request(f"/plans/{legacy['id']}/nodes/{legacy['root_id']}")
     assert old_opening["draft_mode"] == "fearless"
@@ -66,6 +67,7 @@ def test_browser_reopens_selection_result_and_legacy_fixture():
     plan = request("/plans", {
         "match_id": "prospective", "teams": ["Alpha", "Beta"], "coach_team": "Alpha",
         "format": "Bo3", "patch": "16.17", "date": "2026-11-23", "first": "Alpha",
+        "selection_policy": "first_selection",
     })
     url = f"/plans/{plan['id']}"
     selection = request(f"{url}/selection", {"parent_id": plan["root_id"], "first": "Beta", "blue": "Alpha"})
@@ -81,4 +83,5 @@ def test_browser_reopens_selection_result_and_legacy_fixture():
     persisted = json.loads(reopened.request(f"{url}/nodes/{saved['selected_node']}", None, json.dumps(stored)))["data"]
     assert persisted["game_winner"] == "Alpha"
     assert persisted["score"] == {"Alpha": 1, "Beta": 0}
+    assert persisted["selection_policy"] == "first_selection"
     assert persisted["selection_right"] == "Beta"

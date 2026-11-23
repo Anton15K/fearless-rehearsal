@@ -5,7 +5,7 @@ import pytest
 
 from fearless.api import create_app
 from fearless.app_catalog import Match, MatchCatalog
-from fearless.rehearsal import advance_history, create_catalog_plan, new_plan, node_state, select_opening
+from fearless.rehearsal import advance_history, apply_action, create_catalog_plan, new_plan, node_state, record_result, select_opening
 from fearless.rules import schedule
 
 
@@ -65,7 +65,9 @@ def test_persisted_opening_variation_leaves_existing_descendants_intact(board):
     alternate = choose(board, url, root, first="Beta", blue="Beta")
     plan = board.get(url).json()
     assert plan["selected_node"] == alternate
-    assert next(node for node in plan["nodes"] if node["id"] == alternate)["kind"] == "selection"
+    variation = next(node for node in plan["nodes"] if node["id"] == alternate)
+    assert (variation["kind"], variation["first"], variation["blue"]) == ("selection", "Beta", "Beta")
+    assert "first" not in next(node for node in plan["nodes"] if node["id"] == original_ban["selected_node"])
 
     varied = state(board, url, alternate)
     assert (varied["first"], varied["blue"], varied["team"], varied["actions"]) == ("Beta", "Beta", "Beta", [])
@@ -79,7 +81,7 @@ def test_persisted_opening_variation_leaves_existing_descendants_intact(board):
 
 
 def test_confirmed_results_control_loser_selection_and_clinching(board):
-    url, root = matchup(board)
+    url, root = matchup(board, selection_policy="first_selection")
     game1 = draft(board, url, root)
     assert game1["series_status"] == "awaiting_result"
     assert game1["score"] == {"Alpha": 0, "Beta": 0}
@@ -89,6 +91,9 @@ def test_confirmed_results_control_loser_selection_and_clinching(board):
 
     result1 = winner(board, url, game1["node_id"], "Alpha")
     assert winner(board, url, game1["node_id"], "Alpha") == result1
+    result_node = next(node for node in board.get(url).json()["nodes"] if node["id"] == result1)
+    assert result_node["winner"] == "Alpha"
+    assert "first" not in result_node
     assert board.post(f"{url}/result", json={
         "parent_id": game1["node_id"], "winner": "Beta",
     }).status_code == 409
@@ -148,7 +153,7 @@ def test_result_confirms_one_draft_and_turns_other_prepared_openings_into_hypoth
 
 
 def test_decider_still_requires_a_result_and_next_first_pick_is_independent(board):
-    url, root = matchup(board)
+    url, root = matchup(board, selection_policy="first_selection")
     game1 = draft(board, url, root)
     result1 = winner(board, url, game1["node_id"], "Alpha")
     game2_open = choose(board, url, result1, first="Beta", blue="Alpha", choice="first_pick")
@@ -248,7 +253,7 @@ def test_disables_are_branch_local_inherited_and_replaceable(board):
     assert "Poppy" not in state(board, url, edited)["legal"]
     game1 = draft(board, url, edited)
     result1 = winner(board, url, game1["node_id"], "Alpha")
-    game2 = choose(board, url, result1, first="Beta", blue="Alpha", choice="first_pick")
+    game2 = choose(board, url, result1, first="Beta", blue="Alpha")
     assert "Poppy" not in state(board, url, game2)["legal"]
     cleared = choose(board, url, game2, first="Beta", blue="Alpha", disabled=[])
     assert "Poppy" in state(board, url, cleared)["legal"]
@@ -272,7 +277,7 @@ def test_standard_picks_reset_at_next_game_and_remain_eligible_for_pins(tmp_path
         assert repeated in [action["champion"] for action in game1["actions"] if action["kind"] == "pick"]
         assert game1["pins"][0]["status"] == "protected"
         result1 = winner(board, url, game1["node_id"], "Alpha")
-        game2 = choose(board, url, result1, first="Alpha", blue="Beta", choice="map_side")
+        game2 = choose(board, url, result1, first="Alpha", blue="Beta")
         opened = state(board, url, game2)
         assert opened["locked"] == []
         assert repeated in opened["legal"]
@@ -336,3 +341,72 @@ def test_recorded_standard_bo1_has_first_pick_separate_from_map_side(tmp_path):
     result = node_state(plan, plan["selected_node"])
     assert result["series_status"] == "clinched"
     assert result["series_winner"] == "Alpha"
+
+
+@pytest.mark.parametrize(("event", "date", "ruleset", "expected"), [
+    ("LEC 2026 Spring Playoffs", "2026-06-01", None, "first_selection"),
+    ("LCS 2026 Lock-In", "2026-01-24", None, "first_selection"),
+    ("LEC 2026 Spring Playoffs", "2025-06-01", None, "organizer"),
+    ("LEC Academy 2026", "2026-11-23", None, "organizer"),
+    ("Legends Premier League", "2026-11-23", "lec-2026", "organizer"),
+])
+def test_selection_policy_uses_a_dated_event_independently_of_champion_ruleset(
+    board, event, date, ruleset, expected,
+):
+    url, root = matchup(board, event=event, date=date, ruleset=ruleset)
+    assert board.get(url).json()["selection_policy"] == expected
+    assert state(board, url, root)["selection_policy"] == expected
+    assert expected in {row["id"] for row in board.get("/api/bootstrap").json()["selection_policies"]}
+
+
+def test_organizer_controls_both_opening_settings_without_a_loser_right(board):
+    url, root = matchup(board, event="LEC 2026", selection_policy="organizer")
+    game1 = draft(board, url, root)
+    result1 = winner(board, url, game1["node_id"], "Alpha")
+    assert state(board, url, result1)["selection_right"] is None
+
+    game2 = choose(board, url, result1, first="Beta")
+    opening = state(board, url, game2)
+    assert (opening["progression"], opening["first"], opening["blue"], opening["selection_choice"]) == (
+        "actual", "Beta", None, None,
+    )
+    edited = choose(board, url, game2, first="Beta", blue="Alpha")
+    assert state(board, url, edited)["blue"] == "Alpha"
+
+
+def test_blue_first_keeps_order_tied_to_map_side(board):
+    url, root = matchup(board, selection_policy="blue_first", blue=None)
+    opening = state(board, url, root)
+    assert (opening["first"], opening["blue"]) == ("Alpha", "Alpha")
+    assert board.post(f"{url}/selection", json={
+        "parent_id": root, "first": "Beta", "blue": "Alpha",
+    }).status_code == 422
+    assert board.post(f"{url}/actions", json={
+        "parent_id": root, "first": "Beta", "champion": None,
+    }).status_code == 422
+
+    game1 = draft(board, url, root)
+    result1 = winner(board, url, game1["node_id"], "Alpha")
+    assert state(board, url, result1)["selection_right"] is None
+    game2 = choose(board, url, result1, first="Beta")
+    status = state(board, url, game2)
+    assert (status["first"], status["blue"], status["selection_choice"]) == ("Beta", "Beta", None)
+
+
+def test_saved_plan_without_selection_policy_keeps_loser_right():
+    catalog = MatchCatalog(None, None)
+    plan = create_catalog_plan(catalog, {
+        "match_id": "prospective", "teams": ["Alpha", "Beta"], "coach_team": "Alpha", "format": "Bo3",
+        "patch": "16.17", "date": "2026-11-23", "first": "Alpha",
+    })
+    plan.pop("selection_policy")
+
+    position = node_state(plan, plan["root_id"])
+    while position["kind"] in {"pick", "ban"}:
+        apply_action(plan, position["node_id"], position["legal"][0] if position["kind"] == "pick" else None)
+        position = node_state(plan, plan["selected_node"])
+
+    record_result(plan, position["node_id"], "Alpha")
+    result = node_state(plan, plan["selected_node"])
+    assert result["selection_policy"] == "first_selection"
+    assert result["selection_right"] == "Beta"

@@ -4,7 +4,9 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from fearless.app_catalog import Match, MatchCatalog, PROSPECTIVE_ID, eligibility, normalize_disables, ruleset_for
+from fearless.app_catalog import (
+    Match, MatchCatalog, PROSPECTIVE_ID, eligibility, normalize_disables, ruleset_for, selection_policy_for,
+)
 from fearless.app_error import RehearsalError
 from fearless.rules import (
     DRAFT_LENGTH,
@@ -21,7 +23,8 @@ def create_catalog_plan(catalog: MatchCatalog, settings: dict) -> dict:
     if settings.get("match_id") == PROSPECTIVE_ID:
         match = catalog.prospective(settings)
     else:
-        if any(settings.get(field) is not None for field in ("teams", "coach_team", "date", "format", "event", "disabled", "ruleset")):
+        matchup_fields = ("teams", "coach_team", "date", "format", "event", "disabled", "ruleset", "selection_policy")
+        if any(settings.get(field) is not None for field in matchup_fields):
             raise RehearsalError(422, "Choose New matchup to set the teams and series details.")
         match = catalog.matches.get(settings.get("match_id"))
         if match is None:
@@ -53,14 +56,18 @@ def new_plan(match: Match, pool: tuple[str, ...], settings: dict, *, disabled: t
         raise RehearsalError(422, "Choose Fearless Draft or Standard Tournament Draft.")
     if meta["source"] != PROSPECTIVE_ID and draft_mode != recorded_mode:
         raise RehearsalError(422, "Choose New matchup to change the draft mode.")
+    selection_policy = selection_policy_for(meta.get("event"), meta["date"], settings.get("selection_policy"))
     first = settings.get("first") or meta["first"]
     _check_team(meta["teams"], first)
     blue = settings.get("blue") if settings.get("blue") is not None else meta.get("blue")
     if blue is not None:
         _check_team(meta["teams"], blue, "Blue side")
+    blue = _opening_blue(selection_policy, first, blue)
     prior_winners = list(meta.get("prior_winners") or [])
     prior_winner = prior_winners[-1] if prior_winners else None
-    selection_right = _opponent(meta["teams"], prior_winner) if prior_winner else None
+    selection_right = (
+        _opponent(meta["teams"], prior_winner) if prior_winner and selection_policy == "first_selection" else None
+    )
     max_game = int(meta["format"][-1])
     target_game = settings.get("target_game") or min(3, max_game)
     if target_game > max_game:
@@ -88,6 +95,7 @@ def new_plan(match: Match, pool: tuple[str, ...], settings: dict, *, disabled: t
         "date": meta["date"],
         "format": meta["format"],
         "draft_mode": draft_mode,
+        "selection_policy": selection_policy,
         "source": meta["source"],
         "provenance": meta.get("provenance"),
         "team_history": meta.get("team_history"),
@@ -195,6 +203,19 @@ def _opponent(teams: list[str], team: str) -> str:
 
 def _is_fearless(plan: dict) -> bool:
     return plan.get("draft_mode", "fearless") == "fearless"
+
+
+def _selection_policy(plan: dict) -> str:
+    # Existing saves used the loser's First Selection without storing a policy.
+    return plan.get("selection_policy", "first_selection")
+
+
+def _opening_blue(policy: str, first: str, blue: str | None) -> str | None:
+    if policy == "blue_first":
+        if blue is not None and blue != first:
+            raise RehearsalError(422, "The blue-side team must pick first under this selection policy.")
+        return first
+    return blue
 
 
 def _action(node: dict) -> DraftAction:
@@ -325,7 +346,9 @@ def position_at(plan: dict, node_id: str) -> Position:
             selection_right = None
         elif can_rehearse_next and (progression != "historical" or str(game + 1) in plan["replay"]):
             kind, status = "next_game", "awaiting_selection"
-            selection_right = _opponent(teams, game_winner) if game_winner else None
+            selection_right = (
+                _opponent(teams, game_winner) if game_winner and _selection_policy(plan) == "first_selection" else None
+            )
         else:
             kind, status = "complete", "rehearsal_complete"
             selection_right = None
@@ -388,6 +411,8 @@ def select_opening(
         raise RehearsalError(422, "Choose whether this is a preparation branch.")
     if choice is not None and choice not in ("first_pick", "map_side"):
         raise RehearsalError(422, "Choose draft order or map side for the team with selection rights.")
+    policy = _selection_policy(plan)
+    blue = _opening_blue(policy, first, blue)
     at_opening = not pos.actions
     if not at_opening and not pos.can_rehearse_next:
         raise RehearsalError(409, "Opening selections can only change before the first action or between games.")
@@ -404,7 +429,7 @@ def select_opening(
         progression = "hypothetical" if hypothetical or pos.progression == "historical" else pos.progression
         right = pos.selection_right if progression != "hypothetical" else None
         choice = (choice or pos.selection_choice) if right is not None else None
-        if progression == "actual" and pos.game > 1 and blue is None:
+        if progression == "actual" and policy == "first_selection" and pos.game > 1 and blue is None:
             raise RehearsalError(422, "Choose the blue-side team for this game.")
         if requested == original_selection and (choice, right, progression) == (
             original.selection_choice, original.selection_right, original.progression,
@@ -422,8 +447,10 @@ def select_opening(
         return
     if pos.progression != "actual" or pos.series_status != "awaiting_selection" or not pos.game_winner:
         raise RehearsalError(409, "Record the game winner before starting another confirmed game.")
-    if blue is None or choice is None:
+    if policy == "first_selection" and (blue is None or choice is None):
         raise RehearsalError(422, "Record blue side and which selection the previous game's loser made.")
+    if policy != "first_selection":
+        choice = None
     _save_selection(
         plan, pos, "start", first, blue, choice=choice, right=pos.selection_right,
         progression="actual", disabled=restrictions,
@@ -447,6 +474,8 @@ def apply_action(
 
     order = first or pos.first
     _check_team(plan["teams"], order)
+    if _selection_policy(plan) == "blue_first" and order != pos.first:
+        raise RehearsalError(422, "Choose the blue-side team and first pick together before choosing a champion.")
     if pos.actions and order != pos.first:
         raise RehearsalError(422, "First pick can only change at a game opening.")
     other = _opponent(plan["teams"], order)
@@ -589,8 +618,17 @@ def plan_summary(plan: dict) -> dict:
     return {
         **{key: plan[key] for key in ("id", "match_id", "title", "teams", "patch", "source")},
         "draft_mode": plan.get("draft_mode", "fearless"),
+        "selection_policy": _selection_policy(plan),
         **_public_eligibility(plan, node["game"], node["id"]),
     }
+
+
+def _public_node(node: dict) -> dict:
+    kind = node["kind"]
+    public = {key: value for key, value in node.items() if key != "first" or kind in ("start", "selection")}
+    if kind == "result":
+        public["winner"] = node["team"]
+    return public
 
 
 def public_plan(plan: dict) -> dict:
@@ -604,7 +642,7 @@ def public_plan(plan: dict) -> dict:
         "provenance": plan.get("provenance"),
         "team_history": plan.get("team_history"),
         "coach_team": plan["coach_team"],
-        "nodes": [{key: value for key, value in node.items() if key != "first"} for node in plan["nodes"]],
+        "nodes": [_public_node(node) for node in plan["nodes"]],
         "pins": evaluated_pins(plan, position_at(plan, plan["selected_node"]).games),
     }
 
@@ -821,6 +859,7 @@ def node_state(plan: dict, node_id: str, forecaster: Any = None, frequencies: An
         **_public_eligibility(plan, pos.game, node_id),
         "patch": recorded.get("patch", plan["patch"]),
         "draft_mode": plan.get("draft_mode", "fearless"),
+        "selection_policy": _selection_policy(plan),
         "node_id": node_id, "game": pos.game, "first": pos.first, "second": pos.second,
         "team": pos.team, "kind": pos.kind, "actions": pos.actions, "locked": sorted(pos.locked),
         "legal": legal, "suggestions": suggestions, "source": source, "forecast": forecast, "outlook": outlook,

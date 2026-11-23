@@ -56,6 +56,7 @@ class PlanInput(Payload):
     date: Annotated[str, StringConstraints(pattern=r"^\d{4}-\d{2}-\d{2}$")] | None = None
     format: Literal["Bo1", "Bo3", "Bo5"] | None = None
     draft_mode: Literal["fearless", "standard"] | None = None
+    selection_policy: Literal["organizer", "first_selection", "blue_first"] | None = None
     title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)] | None = None
     priority: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)] | None = None
     target_game: Game | None = None
