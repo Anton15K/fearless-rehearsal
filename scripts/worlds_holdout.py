@@ -19,12 +19,12 @@ STAGES = ("Play-In", "Main Event")
 CUTOFF = "2026-10-14"
 ALIASES = {"Cloud9": "Cloud9 Kia", "Gen.G": "Gen.G Esports", "LYON (2024 American Team)": "LYON"}
 TABLES = {
-    "score": ("ScoreboardGames", "GameId,MatchId,Team1,Team2,Patch,N_GameInMatch=number,DateTime_UTC=start"),
+    "score": ("ScoreboardGames", "GameId,MatchId,Team1,Team2,WinTeam,Patch,N_GameInMatch=number,DateTime_UTC=start"),
     "duration": ("ScoreboardGames", "GameId,Gamelength=duration"),
     "schedule": ("MatchScheduleGame", "GameId,Blue,Red,FirstPick"),
     "draft": ("PicksAndBansS7", "GameId,Team1,Team2,IsComplete,IsFilled," + ",".join(
         f"Team{team}{kind}{n}" for team in (1, 2) for kind in ("Ban", "Pick") for n in range(1, 6))),
-    "series": ("MatchSchedule", "MatchId,BestOf,Team1Score,Team2Score,DisabledChampions,IsNullified"),
+    "series": ("MatchSchedule", "MatchId,BestOf,Team1,Team2,Team1Score,Team2Score,DisabledChampions,IsNullified"),
 }
 
 
@@ -74,7 +74,10 @@ def parse_series(metadata, games, draft_by_id, schedule_by_id, patch_map, known,
     games = sorted(games, key=lambda row: int(row["number"]))
     size = len(games)
     wins = [int(metadata[key]) for key in ("Team1Score", "Team2Score")]
-    if metadata.get("IsNullified") == "1" or not size or sum(wins) != size or max(wins) != int(metadata["BestOf"]) // 2 + 1:
+    best_of = int(metadata["BestOf"])
+    target = best_of // 2 + 1
+    if (metadata.get("IsNullified") == "1" or best_of not in (1, 3, 5) or not target <= size <= best_of
+            or sum(wins) != size or min(wins) < 0 or max(wins) != target or wins[0] == wins[1]):
         raise ValueError("unfinished or inconsistent series score")
     if [int(game["number"]) for game in games] != list(range(1, size + 1)):
         raise ValueError("noncontiguous game numbers")
@@ -119,12 +122,30 @@ def parse_series(metadata, games, draft_by_id, schedule_by_id, patch_map, known,
             action = dict(team=team, kind=kind, champion=champion)
             validate_action(pool, locks, actions, first, second, **action)
             actions.append(action)
-        result.append(dict(series_id=game["MatchId"], game_id=key, game_number=int(game["number"]), series_games=size,
+        team_ids = dict(zip(names, (first, second), strict=True))
+        winner = game.get("WinTeam")
+        if winner and winner not in team_ids:
+            raise ValueError("unrecognized game winner")
+        result.append(dict(best_of=best_of, winner=team_ids.get(winner),
+                           sides={team_ids[selection["Blue"]]: "blue", team_ids[selection["Red"]]: "red"},
+                           series_id=game["MatchId"], game_id=key, game_number=int(game["number"]), series_games=size,
                            date=day, drafted_at=start.isoformat(), finished_at=completion.isoformat(),
                            patch=patch, region=region, first=first, second=second,
                            actions=actions, locked=sorted(locks), disabled=sorted(disabled),
                            fearless=True, eligible=True, finished=True))
         previous.append(actions)
+    # Older cached tables may lack individual winners. Never infer them from draft order.
+    observed = Counter()
+    for i, game in enumerate(games):
+        winner = game.get("WinTeam")
+        if winner:
+            observed[winner] += 1
+            if observed[winner] >= target and i < size - 1:
+                raise ValueError("series score clinched before the last game")
+    if metadata.get("Team1") and metadata.get("Team2"):
+        expected = dict(zip((metadata["Team1"], metadata["Team2"]), wins, strict=True))
+        if set(expected) != set(names) or any(count > expected[team] for team, count in observed.items()):
+            raise ValueError("game winners disagree with the series score")
     return result
 
 

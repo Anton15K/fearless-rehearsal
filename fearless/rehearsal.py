@@ -1,10 +1,12 @@
 """Build draft states and apply changes to a saved rehearsal tree."""
 
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from fearless.app_catalog import Match, MatchCatalog, PROSPECTIVE_ID
+from fearless.app_catalog import (
+    Match, MatchCatalog, PROSPECTIVE_ID, eligibility, normalize_disables, ruleset_for, selection_policy_for,
+)
 from fearless.app_error import RehearsalError
 from fearless.rules import (
     DRAFT_LENGTH,
@@ -21,7 +23,8 @@ def create_catalog_plan(catalog: MatchCatalog, settings: dict) -> dict:
     if settings.get("match_id") == PROSPECTIVE_ID:
         match = catalog.prospective(settings)
     else:
-        if any(settings.get(field) is not None for field in ("teams", "coach_team", "date", "format", "event", "disabled")):
+        matchup_fields = ("teams", "coach_team", "date", "format", "event", "disabled", "ruleset", "selection_policy")
+        if any(settings.get(field) is not None for field in matchup_fields):
             raise RehearsalError(422, "Choose New matchup to set the teams and series details.")
         match = catalog.matches.get(settings.get("match_id"))
         if match is None:
@@ -30,22 +33,41 @@ def create_catalog_plan(catalog: MatchCatalog, settings: dict) -> dict:
     pool = catalog.pool(match, patch)
     if pool is None:
         raise RehearsalError(422, "The champion catalog does not include that patch.")
-    disabled = ()
-    if settings.get("disabled"):
-        by_name = {c.casefold(): c for c in pool}
-        names = {name.casefold().strip() for name in settings["disabled"]}
-        if not names <= by_name.keys() or names == by_name.keys():
-            raise RehearsalError(422, "Choose disabled champions from this patch and leave champions available.")
-        disabled = tuple(by_name[name] for name in sorted(names))
-        pool = tuple(c for c in pool if c.casefold() not in names)
-    return new_plan(match, pool, settings, disabled=disabled)
+    ruleset = ruleset_for(match.metadata.get("event"), match.metadata["date"], settings.get("ruleset"))
+    manual = settings.get("disabled")
+    if manual is not None and (not isinstance(manual, list) or len(manual) > 30):
+        raise RehearsalError(422, "Select up to 30 additional disables.")
+    base = eligibility(pool, patch, ruleset, manual=manual if manual is not None else (),
+                       historical=match.metadata["source"] == "historical")
+    plan = new_plan(match, tuple(base["pool"]), settings, disabled=tuple(base["disabled"]))
+    plan.update(base)
+    if patch == match.metadata["patch"]:
+        plan["game_eligibility"] = {str(game): game_data["eligibility"]
+                                    for game, game_data in match.historical.items()}
+    return plan
 
 
 def new_plan(match: Match, pool: tuple[str, ...], settings: dict, *, disabled: tuple[str, ...] = ()) -> dict:
     meta = match.metadata
     patch = settings.get("patch") or meta["patch"]
+    recorded_mode = meta.get("draft_mode", "fearless")
+    draft_mode = settings.get("draft_mode") or recorded_mode
+    if draft_mode not in ("fearless", "standard"):
+        raise RehearsalError(422, "Choose Fearless Draft or Standard Tournament Draft.")
+    if meta["source"] != PROSPECTIVE_ID and draft_mode != recorded_mode:
+        raise RehearsalError(422, "Choose New matchup to change the draft mode.")
+    selection_policy = selection_policy_for(meta.get("event"), meta["date"], settings.get("selection_policy"))
     first = settings.get("first") or meta["first"]
     _check_team(meta["teams"], first)
+    blue = settings.get("blue") if settings.get("blue") is not None else meta.get("blue")
+    if blue is not None:
+        _check_team(meta["teams"], blue, "Blue side")
+    blue = _opening_blue(selection_policy, first, blue)
+    prior_winners = list(meta.get("prior_winners") or [])
+    prior_winner = prior_winners[-1] if prior_winners else None
+    selection_right = (
+        _opponent(meta["teams"], prior_winner) if prior_winner and selection_policy == "first_selection" else None
+    )
     max_game = int(meta["format"][-1])
     target_game = settings.get("target_game") or min(3, max_game)
     if target_game > max_game:
@@ -72,6 +94,8 @@ def new_plan(match: Match, pool: tuple[str, ...], settings: dict, *, disabled: t
         "patch": patch,
         "date": meta["date"],
         "format": meta["format"],
+        "draft_mode": draft_mode,
+        "selection_policy": selection_policy,
         "source": meta["source"],
         "provenance": meta.get("provenance"),
         "team_history": meta.get("team_history"),
@@ -81,7 +105,7 @@ def new_plan(match: Match, pool: tuple[str, ...], settings: dict, *, disabled: t
         "nodes": [{
             "id": root, "parent_id": None, "game": len(match.previous) + 1,
             "team": None, "kind": "start", "champion": None,
-            "origin": "rehearsal", "first": first,
+            "origin": "rehearsal", "first": first, "blue": blue, "selection_right": selection_right,
         }],
         "pins": [],
         "brief": [],
@@ -96,6 +120,7 @@ def new_plan(match: Match, pool: tuple[str, ...], settings: dict, *, disabled: t
         "player_ids": match.player_ids,
         "pool": list(pool),
         "prior": match.previous,
+        "prior_winners": prior_winners,
         "opening": match.opening if seeded else [],
         "replay": {str(game): row for game, row in match.historical.items()} if patch == meta["patch"] else {},
     }
@@ -118,9 +143,79 @@ def _find_node(plan: dict, node_id: str) -> dict:
     raise RehearsalError(404, "Draft position not found in this plan.")
 
 
-def _check_team(teams: list[str], team: str) -> None:
+def _base_eligibility(plan: dict, game: int) -> dict:
+    row = plan.get("game_eligibility", {}).get(str(game))
+    return row if row is not None else plan
+
+
+def inherited_game_disabled(plan: dict, game: int, node_id: str | None) -> list[str]:
+    nodes = {node["id"]: node for node in plan.get("nodes", ())}
+    cursor = nodes.get(node_id)
+    while cursor is not None:
+        if cursor["game"] <= game and "game_disabled" in cursor:
+            return cursor["game_disabled"]
+        cursor = nodes.get(cursor["parent_id"])
+    return []
+
+
+def validate_game_disabled(plan: dict, game: int, values: list[str]) -> list[str]:
+    base = _base_eligibility(plan, game)
+    values = normalize_disables(base.get("client_pool", [*base["pool"], *base.get("disabled", ())]), values)
+    if len(values) > 30 or not set(base["pool"]) - set(values):
+        raise RehearsalError(422, "Select up to 30 additional disables and leave champions available.")
+    return values
+
+
+def pool_at(plan: dict, game: int, node_id: str | None = None) -> list[str]:
+    base = _base_eligibility(plan, game)
+    disabled = set(inherited_game_disabled(plan, game, node_id or plan.get("selected_node")))
+    return [champion for champion in base["pool"] if champion not in disabled]
+
+
+def _public_eligibility(plan: dict, game: int, node_id: str) -> dict:
+    base = _base_eligibility(plan, game)
+    disabled = base.get("disabled", [])
+    game_disabled = inherited_game_disabled(plan, game, node_id)
+    restrictions = base.get("restrictions", [
+        {"champion": name, "reason": "manual", "source": None} for name in disabled
+    ])
+    extra = [name for name in game_disabled if name not in disabled]
+    return {
+        "ruleset": base.get("ruleset", "manual"), "game_disabled": game_disabled,
+        "restriction_status": base.get("restriction_status", "unknown" if plan["source"] == "historical" else "manual"),
+        "disabled": sorted(set(disabled).union(game_disabled), key=str.casefold),
+        "restrictions": sorted([*restrictions, *[
+            {"champion": name, "reason": "organizer", "source": None} for name in extra
+        ]], key=lambda item: item["champion"].casefold()),
+        "client_pool_size": len(base.get("client_pool", ())) or len(base["pool"]) + len(disabled),
+        "effective_pool_size": len(pool_at(plan, game, node_id)),
+    }
+
+
+def _check_team(teams: list[str], team: str, field: str = "First pick") -> None:
     if team not in teams:
-        raise RehearsalError(422, "First pick must belong to a team in this match.")
+        raise RehearsalError(422, f"{field} must belong to a team in this match.")
+
+
+def _opponent(teams: list[str], team: str) -> str:
+    return next(other for other in teams if other != team)
+
+
+def _is_fearless(plan: dict) -> bool:
+    return plan.get("draft_mode", "fearless") == "fearless"
+
+
+def _selection_policy(plan: dict) -> str:
+    # Existing saves used the loser's First Selection without storing a policy.
+    return plan.get("selection_policy", "first_selection")
+
+
+def _opening_blue(policy: str, first: str, blue: str | None) -> str | None:
+    if policy == "blue_first":
+        if blue is not None and blue != first:
+            raise RehearsalError(422, "The blue-side team must pick first under this selection policy.")
+        return first
+    return blue
 
 
 def _action(node: dict) -> DraftAction:
@@ -137,6 +232,20 @@ class Position:
     locked: set[str]
     team: str | None
     kind: str
+    _: KW_ONLY
+    opening: dict | None = None
+    blue: str | None = None
+    selection_right: str | None = None
+    selection_choice: str | None = None
+    game_disabled: list[str] | None = None
+    progression: str = "hypothetical"
+    series_status: str = "drafting"
+    game_winner: str | None = None
+    series_winner: str | None = None
+    score: dict[str, int] = field(default_factory=dict)
+    score_complete: bool = False
+    can_rehearse_next: bool = False
+    recorded: dict | None = None
 
     @property
     def game(self) -> int:
@@ -145,6 +254,25 @@ class Position:
     @property
     def current(self) -> list[DraftAction]:
         return self.games[-1]
+
+    @property
+    def red(self) -> str | None:
+        if self.blue is None:
+            return None
+        return self.second if self.blue == self.first else self.first
+
+
+def _matching_replay(plan: dict, game: int, first: str, blue: str | None, games: list[list[DraftAction]]) -> dict | None:
+    replay = plan["replay"]
+    recorded = replay.get(str(game))
+    if not recorded or first != recorded["first"] or (recorded.get("blue") and blue != recorded["blue"]):
+        return None
+    prior = len(plan["prior"])
+    for number, actions in enumerate(games[prior:], start=prior + 1):
+        actual = replay.get(str(number))
+        if not actual or actions != actual["actions"][:len(actions)]:
+            return None
+    return recorded
 
 
 def position_at(plan: dict, node_id: str) -> Position:
@@ -159,43 +287,174 @@ def position_at(plan: dict, node_id: str) -> Position:
     while cursor:
         path.append(cursor)
         cursor = nodes.get(cursor["parent_id"])
-
+    # A recorded result fixes one confirmed draft for the series. Sibling
+    # variations stay available for preparation, even after a later game ends.
+    confirmed_id = plan.get("confirmed_result_id")
+    off_confirmed_path = False
+    if confirmed_id and confirmed_id not in {node["id"] for node in path}:
+        cursor = nodes[confirmed_id]
+        while cursor and cursor["id"] != node_id:
+            cursor = nodes.get(cursor["parent_id"])
+        off_confirmed_path = cursor is None
+    opening = path.pop()
+    first, blue = opening["first"], opening.get("blue")
+    selection_right, selection_choice = opening.get("selection_right"), opening.get("selection_choice")
+    game_disabled = opening.get("game_disabled")
+    progression = {"illustrative": "hypothetical", "historical": "historical"}.get(plan["source"], "actual")
     previous = list(plan["prior"])
     actions = [{**action, "origin": "rehearsal"} for action in plan["opening"]]
+    winners = dict(enumerate(plan.get("prior_winners", ()), 1))
     for node in reversed(path):
         if node["kind"] in ("pick", "ban"):
+            first = node["first"]
             actions.append({**_action(node), "origin": node["origin"]})
-        elif node["parent_id"] is not None:
-            previous.append([_action(action) for action in actions])
-            actions = []
+        elif node["kind"] == "result":
+            winners[node["game"]] = node["team"]
+        else:
+            if node["kind"] == "start":
+                previous.append([_action(action) for action in actions])
+                actions = []
+                opening = node
+            first, blue = node["first"], node.get("blue")
+            selection_right, selection_choice = node.get("selection_right"), node.get("selection_choice")
+            game_disabled = node.get("game_disabled", game_disabled)
+            progression = node.get("progression", "historical" if node["origin"] == "historical" else "hypothetical")
 
-    first = selected["first"]
-    second = next(team for team in plan["teams"] if team != first)
-    if len(actions) < DRAFT_LENGTH:
+    game = selected["game"]
+    teams = plan["teams"]
+    second = _opponent(teams, first)
+    games = [*previous, [_action(action) for action in actions]]
+    recorded = _matching_replay(plan, game, first, blue, games) if progression == "historical" else None
+    if (progression == "historical" and not recorded) or (progression == "actual" and off_confirmed_path):
+        progression = "hypothetical"
+    score = {team: sum(winner == team for winner in winners.values()) for team in teams}
+    max_game = int(plan["format"][-1])
+    series_winner = next((team for team in teams if score[team] >= max_game // 2 + 1), None)
+    game_winner = winners.get(game)
+    score_complete = all(winners.get(number) is not None for number in range(1, game))
+    finished_draft = len(actions) == DRAFT_LENGTH
+    can_rehearse_next = finished_draft and game < max_game
+    if not finished_draft:
         team, kind = schedule(first, second)[len(actions)]
+        status = "drafting"
     else:
         team = None
-        kind = "complete" if selected["game"] >= int(plan["format"][-1]) else "next_game"
+        if game_winner is None and (progression == "actual" or (recorded and recorded.get("winner"))):
+            kind, status = "result", "awaiting_result"
+        elif series_winner and progression != "hypothetical":
+            kind, status = "complete", "clinched"
+            selection_right = None
+        elif can_rehearse_next and (progression != "historical" or str(game + 1) in plan["replay"]):
+            kind, status = "next_game", "awaiting_selection"
+            selection_right = (
+                _opponent(teams, game_winner) if game_winner and _selection_policy(plan) == "first_selection" else None
+            )
+        else:
+            kind, status = "complete", "rehearsal_complete"
+            selection_right = None
     return Position(
-        selected, first, second, [*previous, [_action(action) for action in actions]],
-        actions, series_locks(previous), team, kind,
+        node=selected, opening=opening, first=first, second=second, blue=blue,
+        selection_right=selection_right, selection_choice=selection_choice, game_disabled=game_disabled,
+        games=games, actions=actions, locked=series_locks(previous, fearless=_is_fearless(plan)), team=team, kind=kind,
+        progression=progression, series_status=status, game_winner=game_winner, series_winner=series_winner,
+        score=score, score_complete=score_complete, can_rehearse_next=can_rehearse_next, recorded=recorded,
     )
 
 
 def history_at(plan: dict, pos: Position) -> dict | None:
-    replay = plan["replay"]
-    recorded = replay.get(str(pos.game))
-    if not recorded or pos.first != recorded["first"]:
+    if pos.recorded is None:
         return None
-    for game, actions in enumerate(pos.games[len(plan["prior"]):], start=len(plan["prior"]) + 1):
-        actual = replay.get(str(game))
-        if not actual or actions != actual["actions"][:len(actions)]:
-            return None
+    if pos.kind == "result":
+        return {"team": None, "kind": "result", "champion": None}
     if pos.kind == "next_game":
-        return {"team": None, "kind": "next_game", "champion": None} if str(pos.game + 1) in replay else None
+        if str(pos.game + 1) in plan["replay"]:
+            return {"team": None, "kind": "next_game", "champion": None}
+        return None
     if pos.kind not in ("pick", "ban"):
         return None
-    return recorded["actions"][len(pos.actions)]
+    return pos.recorded["actions"][len(pos.actions)]
+
+
+def _select_child(plan: dict, parent_id: str, **values) -> None:
+    for node in plan["nodes"]:
+        if node["parent_id"] == parent_id and all(node.get(key) == value for key, value in values.items()):
+            plan["selected_node"] = node["id"]
+            return
+    new_id = uuid4().hex
+    plan["nodes"].append({"id": new_id, "parent_id": parent_id, **values})
+    plan["selected_node"] = new_id
+
+
+def _save_selection(
+    plan: dict, pos: Position, kind: str, first: str, blue: str | None, *,
+    progression: str, choice: str | None = None, right: str | None = None, disabled: list[str] | None = None,
+) -> None:
+    opening_edit = kind == "selection"
+    _select_child(
+        plan, pos.opening["id"] if opening_edit else pos.node["id"],
+        kind=kind, game=pos.game if opening_edit else pos.game + 1, first=first, blue=blue, team=None, champion=None,
+        selection_choice=choice, selection_right=right, progression=progression,
+        origin="historical" if progression == "historical" else "rehearsal",
+        **({"game_disabled": disabled} if disabled is not None else {}),
+    )
+
+
+def select_opening(
+    plan: dict, parent_id: str, first: str, blue: str | None, *,
+    choice: str | None = None, hypothetical: bool = False, disabled: list[str] | None = None,
+) -> None:
+    pos = position_at(plan, parent_id)
+    _check_team(plan["teams"], first)
+    if blue is not None:
+        _check_team(plan["teams"], blue, "Blue side")
+    if not isinstance(hypothetical, bool):
+        raise RehearsalError(422, "Choose whether this is a preparation branch.")
+    if choice is not None and choice not in ("first_pick", "map_side"):
+        raise RehearsalError(422, "Choose draft order or map side for the team with selection rights.")
+    policy = _selection_policy(plan)
+    blue = _opening_blue(policy, first, blue)
+    at_opening = not pos.actions
+    if not at_opening and not pos.can_rehearse_next:
+        raise RehearsalError(409, "Opening selections can only change before the first action or between games.")
+    game = pos.game if at_opening else pos.game + 1
+    restrictions = validate_game_disabled(plan, game, disabled) if disabled is not None else pos.game_disabled
+
+    if at_opening:
+        original = position_at(plan, pos.opening["id"])
+        requested = (first, blue, restrictions or [])
+        original_selection = (original.first, original.blue, original.game_disabled or [])
+        if original.progression == "historical" and not hypothetical and requested == original_selection:
+            plan["selected_node"] = original.node["id"]
+            return
+        progression = "hypothetical" if hypothetical or pos.progression == "historical" else pos.progression
+        right = pos.selection_right if progression != "hypothetical" else None
+        choice = (choice or pos.selection_choice) if right is not None else None
+        if progression == "actual" and policy == "first_selection" and pos.game > 1 and blue is None:
+            raise RehearsalError(422, "Choose the blue-side team for this game.")
+        if requested == original_selection and (choice, right, progression) == (
+            original.selection_choice, original.selection_right, original.progression,
+        ):
+            plan["selected_node"] = original.node["id"]
+            return
+        _save_selection(
+            plan, pos, "selection", first, blue, choice=choice, right=right,
+            progression=progression, disabled=restrictions,
+        )
+        return
+
+    if hypothetical:
+        _save_selection(plan, pos, "start", first, blue, progression="hypothetical", disabled=restrictions)
+        return
+    if pos.progression != "actual" or pos.series_status != "awaiting_selection" or not pos.game_winner:
+        raise RehearsalError(409, "Record the game winner before starting another confirmed game.")
+    if policy == "first_selection" and (blue is None or choice is None):
+        raise RehearsalError(422, "Record blue side and which selection the previous game's loser made.")
+    if policy != "first_selection":
+        choice = None
+    _save_selection(
+        plan, pos, "start", first, blue, choice=choice, right=pos.selection_right,
+        progression="actual", disabled=restrictions,
+    )
 
 
 def apply_action(
@@ -204,39 +463,52 @@ def apply_action(
     pos = position_at(plan, parent_id)
     if pos.kind == "complete":
         raise RehearsalError(409, "This series is complete.")
+    if pos.kind in ("next_game", "result"):
+        if champion is not None:
+            raise RehearsalError(422, "Start the next game before choosing a champion.")
+        if pos.progression == "actual" and first is None:
+            raise RehearsalError(422, "Choose the opening selections for the next game.")
+        # Older clients still open preparation branches via an empty action.
+        select_opening(plan, parent_id, first or pos.second, None, hypothetical=True)
+        return
 
     order = first or pos.first
     _check_team(plan["teams"], order)
-    if pos.kind == "next_game":
-        if champion is not None:
-            raise RehearsalError(422, "Start the next game before choosing a champion.")
-        order = first or pos.second
-        game, team, kind = pos.game + 1, None, "start"
-    else:
-        if pos.actions and order != pos.first:
-            raise RehearsalError(422, "First pick can only change at a game opening.")
-        other = next(team for team in plan["teams"] if team != order)
-        team, kind = schedule(order, other)[len(pos.actions)]
-        try:
-            validate_action(plan["pool"], pos.locked, pos.current, order, other, team, kind, champion)
-        except ValueError as error:
-            raise RehearsalError(422, str(error)) from error
-        game = pos.game
+    if _selection_policy(plan) == "blue_first" and order != pos.first:
+        raise RehearsalError(422, "Choose the blue-side team and first pick together before choosing a champion.")
+    if pos.actions and order != pos.first:
+        raise RehearsalError(422, "First pick can only change at a game opening.")
+    other = _opponent(plan["teams"], order)
+    team, kind = schedule(order, other)[len(pos.actions)]
+    try:
+        validate_action(pool_at(plan, pos.game, parent_id), pos.locked, pos.current, order, other, team, kind, champion)
+    except ValueError as error:
+        raise RehearsalError(422, str(error)) from error
 
+    _select_child(
+        plan, parent_id, game=pos.game, first=order, team=team, kind=kind, champion=champion,
+        origin="historical" if historical else "rehearsal",
+    )
+
+
+def record_result(plan: dict, parent_id: str, winner: str, *, historical: bool = False) -> None:
+    pos = position_at(plan, parent_id)
+    expected_progression = "historical" if historical else "actual"
+    if pos.progression != expected_progression or pos.series_status != "awaiting_result":
+        raise RehearsalError(409, "A result can only be recorded after the corresponding draft is complete.")
+    _check_team(plan["teams"], winner, "Winner")
     for node in plan["nodes"]:
-        if (
-            node["parent_id"] == parent_id and node["champion"] == champion
-            and node["kind"] == kind and node["first"] == order
-        ):
+        if node["parent_id"] == parent_id and node["kind"] == "result":
+            if node["team"] != winner:
+                raise RehearsalError(409, "A different result is already recorded for this draft.")
             plan["selected_node"] = node["id"]
             return
-
-    node_id = uuid4().hex
-    plan["nodes"].append({
-        "id": node_id, "parent_id": parent_id, "game": game, "first": order, "team": team,
-        "kind": kind, "champion": champion, "origin": "historical" if historical else "rehearsal",
-    })
-    plan["selected_node"] = node_id
+    _select_child(
+        plan, parent_id, game=pos.game, first=pos.first, team=winner, kind="result", champion=None,
+        origin="historical" if historical else "rehearsal",
+    )
+    if not historical:
+        plan["confirmed_result_id"] = plan["selected_node"]
 
 
 def advance_history(plan: dict, parent_id: str) -> None:
@@ -244,8 +516,16 @@ def advance_history(plan: dict, parent_id: str) -> None:
     history = history_at(plan, pos)
     if history is None:
         raise RehearsalError(409, "This branch has no next historical action.")
-    first = plan["replay"][str(pos.game + 1)]["first"] if pos.kind == "next_game" else None
-    apply_action(plan, parent_id, history["champion"], first, historical=True)
+    if pos.kind == "result":
+        record_result(plan, parent_id, pos.recorded["winner"], historical=True)
+    elif pos.kind == "next_game":
+        next_game = plan["replay"][str(pos.game + 1)]
+        _save_selection(
+            plan, pos, "start", next_game["first"], next_game.get("blue"),
+            progression="historical", right=pos.selection_right, disabled=pos.game_disabled,
+        )
+    else:
+        apply_action(plan, parent_id, history["champion"], historical=True)
 
 
 def _pin_team(plan: dict, player: str) -> str:
@@ -258,12 +538,14 @@ def _pin_team(plan: dict, player: str) -> str:
 
 
 def save_pin(plan: dict, pin: dict) -> None:
-    _check_champion(plan, pin["champion"])
-    _check_champion(plan, pin["backup"])
-    if pin["champion"] == pin["backup"]:
-        raise RehearsalError(422, "Choose a different champion as the backup.")
     if not len(plan["prior"]) < pin["game"] <= int(plan["format"][-1]):
         raise RehearsalError(422, f"Choose a target game in the remaining {plan['format']} draft.")
+    node_id = pin.get("node_id") or plan["selected_node"]
+    available = pool_at(plan, pin["game"], node_id)
+    _check_champion(available, pin["champion"])
+    _check_champion(available, pin["backup"])
+    if pin["champion"] == pin["backup"]:
+        raise RehearsalError(422, "Choose a different champion as the backup.")
 
     if pin.get("node_id"):
         _find_node(plan, pin["node_id"])
@@ -280,23 +562,24 @@ def save_pin(plan: dict, pin: dict) -> None:
 
 
 def save_brief(plan: dict, brief: dict) -> None:
-    _check_champion(plan, brief["backup"])
-    _find_node(plan, brief["node_id"])
+    node = _find_node(plan, brief["node_id"])
+    _check_champion(pool_at(plan, node["game"], node["id"]), brief["backup"])
     plan["brief"] = [old for old in plan["brief"] if old["node_id"] != brief["node_id"]]
     plan["brief"].append(brief)
     plan["selected_node"] = brief["node_id"]
 
 
-def _check_champion(plan: dict, champion: str | None) -> None:
-    if champion is not None and champion not in plan["pool"]:
+def _check_champion(pool: list[str], champion: str | None) -> None:
+    if champion is not None and champion not in pool:
         raise RehearsalError(422, "Choose an enabled champion from the patch pool.")
 
 
-def _pin_reason(pin: dict, status: str, games: list[list[DraftAction]]) -> str:
+def _pin_reason(pin: dict, status: str, games: list[list[DraftAction]], *, fearless: bool) -> str:
     champ, target = pin["champion"], pin["game"]
-    for game, actions in enumerate(games[:target - 1], 1):
-        if any(action["kind"] == "pick" and action["champion"] == champ for action in actions):
-            return f"Picked in Game {game} and locked for the rest of the series."
+    if fearless:
+        for game, actions in enumerate(games[:target - 1], 1):
+            if any(action["kind"] == "pick" and action["champion"] == champ for action in actions):
+                return f"Picked in Game {game} and locked for the rest of the series."
 
     if target <= len(games):
         action = next((action for action in games[target - 1] if action["champion"] == champ), None)
@@ -314,20 +597,38 @@ def _pin_reason(pin: dict, status: str, games: list[list[DraftAction]]) -> str:
     return f"A pick by either side before Game {target} will lock {champ}."
 
 
-def evaluated_pins(plan: dict, games: list[list[DraftAction]]) -> list[dict]:
+def evaluated_pins(plan: dict, games: list[list[DraftAction]], node_id: str | None = None) -> list[dict]:
     result = []
     for pin in plan["pins"]:
-        status = pin_status(plan["pool"], games, pin["game"], pin["champion"], pin["team"])
+        available = pool_at(plan, pin["game"], node_id)
+        fearless = _is_fearless(plan)
+        status = pin_status(available, games, pin["game"], pin["champion"], pin["team"], fearless=fearless)
+        reason = (_pin_reason(pin, status, games, fearless=fearless) if pin["champion"] in available
+                  else f"Not eligible in Game {pin['game']} under these tournament restrictions.")
         result.append({
             **{key: pin[key] for key in ("champion", "game", "player", "backup")},
             "status": status,
-            "reason": _pin_reason(pin, status, games),
+            "reason": reason,
         })
     return result
 
 
 def plan_summary(plan: dict) -> dict:
-    return {key: plan[key] for key in ("id", "match_id", "title", "teams", "patch", "source")}
+    node = _find_node(plan, plan["selected_node"])
+    return {
+        **{key: plan[key] for key in ("id", "match_id", "title", "teams", "patch", "source")},
+        "draft_mode": plan.get("draft_mode", "fearless"),
+        "selection_policy": _selection_policy(plan),
+        **_public_eligibility(plan, node["game"], node["id"]),
+    }
+
+
+def _public_node(node: dict) -> dict:
+    kind = node["kind"]
+    public = {key: value for key, value in node.items() if key != "first" or kind in ("start", "selection")}
+    if kind == "result":
+        public["winner"] = node["team"]
+    return public
 
 
 def public_plan(plan: dict) -> dict:
@@ -338,11 +639,10 @@ def public_plan(plan: dict) -> dict:
             "rosters", "brief",
         )},
         "event": plan.get("event"),
-        "disabled": plan.get("disabled", []),
         "provenance": plan.get("provenance"),
         "team_history": plan.get("team_history"),
         "coach_team": plan["coach_team"],
-        "nodes": [{key: value for key, value in node.items() if key != "first"} for node in plan["nodes"]],
+        "nodes": [_public_node(node) for node in plan["nodes"]],
         "pins": evaluated_pins(plan, position_at(plan, plan["selected_node"]).games),
     }
 
@@ -399,10 +699,12 @@ def _forecast_context(plan: dict, pos: Position, prefix: list[DraftAction], fore
     rosters = _model_rosters(plan)
     if plan.get("source") == PROSPECTIVE_ID and (overrides_only or getattr(forecaster, "accepts_event", False)):
         rosters = {ids[name]: rosters[ids[name]] for name in plan.get("roster_overrides", ()) if ids[name] in rosters}
+    recorded = plan.get("replay", {}).get(str(pos.game), {})
     return dict(
-        date=plan["date"], patch=plan["patch"], region=plan["region"],
+        date=recorded.get("date", plan["date"]), patch=recorded.get("patch", plan["patch"]), region=plan["region"],
         first=ids[pos.first], second=ids[pos.second], game_number=pos.game, current=current,
-        locked=sorted(pos.locked), pool=plan["pool"], rosters=rosters,
+        locked=sorted(pos.locked), pool=pool_at(plan, pos.game, pos.node.get("id")), rosters=rosters,
+        **({"fearless": False} if not _is_fearless(plan) else {}),
         **({"event": plan.get("event"), "series_id": plan.get("match_id")}
            if getattr(forecaster, "accepts_event", False) else {}),
     )
@@ -455,7 +757,10 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
         if pin is None:
             return None
         games = [*pos.games[:-1], list(prefix)]
-        return pin_status(plan["pool"], games, pin["game"], pin["champion"], pin["team"])
+        return pin_status(
+            pool_at(plan, pin["game"], pos.node.get("id")), games, pin["game"], pin["champion"], pin["team"],
+            fearless=_is_fearless(plan),
+        )
 
     qualities, sources = set(), set()
 
@@ -469,7 +774,7 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
         return result
 
     result = lookahead(
-        pool=plan["pool"], locked=pos.locked, current=pos.current,
+        pool=pool_at(plan, pos.game, pos.node.get("id")), locked=pos.locked, current=pos.current,
         first=pos.first, second=pos.second, coach_team=plan["coach_team"],
         forecast=scored_forecast, evaluate_pin=evaluate if pin else None,
     )
@@ -490,7 +795,8 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
 
 def node_state(plan: dict, node_id: str, forecaster: Any = None, frequencies: Any = None) -> dict:
     pos = position_at(plan, node_id)
-    legal = legal_champions(plan["pool"], pos.locked, pos.current) if pos.team else []
+    recorded = plan["replay"].get(str(pos.game), {})
+    legal = legal_champions(pool_at(plan, pos.game, node_id), pos.locked, pos.current) if pos.team else []
     suggestions = []
     source = "Forecast unavailable"
     forecast = None
@@ -500,7 +806,9 @@ def node_state(plan: dict, node_id: str, forecaster: Any = None, frequencies: An
             suggestions = _illustrative_options(pos, legal)
         source = "Illustrative scenario · authored options"
     elif legal:
-        result = forecast_at(plan, pos, forecaster, pos.current, limit=3) if forecaster is not None else {}
+        fearless = _is_fearless(plan)
+        # The shipped probability policies have no Standard-specific validation.
+        result = forecast_at(plan, pos, forecaster, pos.current, limit=3) if forecaster is not None and fearless else {}
         if result.get("as_of") and result["choices"]:
             method = result["method"].replace("_", " ")
             quality = _probability_quality(result)
@@ -535,20 +843,30 @@ def node_state(plan: dict, node_id: str, forecaster: Any = None, frequencies: An
             outlook = _opponent_outlook(plan, pos, forecaster, result)
         elif frequencies is not None:
             observed = frequencies.estimate(
-                as_of=plan["date"], region=plan["region"], kind=pos.kind, legal=legal,
+                as_of=recorded.get("date", plan["date"]), region=plan["region"], kind=pos.kind, legal=legal,
+                **({"fearless": False} if not fearless else {}),
             )
             if observed["choices"]:
                 suggestions = observed["choices"]
-                source = f"Historical frequency ranking · evidence through {observed['as_of']}"
+                label = "Historical" if fearless else "Standard draft"
+                source = f"{label} frequency ranking · evidence through {observed['as_of']}"
                 forecast = {
                     "method": "frequency", "calibrated": False,
                     "as_of": observed["as_of"], "sample": observed["sample"],
                 }
 
     return {
+        **_public_eligibility(plan, pos.game, node_id),
+        "patch": recorded.get("patch", plan["patch"]),
+        "draft_mode": plan.get("draft_mode", "fearless"),
+        "selection_policy": _selection_policy(plan),
         "node_id": node_id, "game": pos.game, "first": pos.first, "second": pos.second,
         "team": pos.team, "kind": pos.kind, "actions": pos.actions, "locked": sorted(pos.locked),
         "legal": legal, "suggestions": suggestions, "source": source, "forecast": forecast, "outlook": outlook,
-        "pins": evaluated_pins(plan, pos.games), "completed": pos.kind == "complete",
+        "blue": pos.blue, "red": pos.red, "selection_right": pos.selection_right,
+        "selection_choice": pos.selection_choice, "progression": pos.progression,
+        "series_status": pos.series_status, "game_winner": pos.game_winner, "series_winner": pos.series_winner,
+        "score": pos.score, "score_complete": pos.score_complete, "can_rehearse_next": pos.can_rehearse_next,
+        "pins": evaluated_pins(plan, pos.games, node_id), "completed": pos.kind == "complete",
         "history": history_at(plan, pos),
     }

@@ -1,5 +1,5 @@
 """Validate released tournament drafts before they become evidence for another series."""
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -37,6 +37,24 @@ def completed_series(rows):
                 or [g["game_number"] for g in series] != list(range(1, size + 1))):
             raise ValueError("Incomplete or inconsistent series size.")
         players = {series[0]["first"], series[0]["second"]}
+        formats = {g["best_of"] for g in series if g.get("best_of") is not None}
+        if len(formats) > 1:
+            raise ValueError("Conflicting series formats.")
+        best_of = next(iter(formats), None)
+        if best_of is not None:
+            if type(best_of) is not int or best_of not in (1, 3, 5) or not best_of // 2 + 1 <= size <= best_of:
+                raise ValueError("Game count is inconsistent with the series format.")
+            wins = Counter()
+            target = best_of // 2 + 1
+            for index, game in enumerate(series):
+                if winner := game.get("winner"):
+                    if winner not in players:
+                        raise ValueError("Unrecognized series participant in game results.")
+                    wins[winner] += 1
+                    if index < size - 1 and wins[winner] >= target:
+                        raise ValueError("Game played after the series was clinched.")
+            if sum(wins.values()) == size and max(wins.values()) != target:
+                raise ValueError("Game winners do not establish a completed series.")
         event = series[0].get("event")
         history, last_end = [], None
         for game in series:

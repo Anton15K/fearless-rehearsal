@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { ArrowRight, CalendarDays, ChevronRight, ClipboardList, FolderOpen, Plus, Swords } from 'lucide-react'
-import type { Bootstrap, Match, Plan, PlanInput, PlanSummary } from './api'
+import type { Bootstrap, Match, Plan, PlanInput, PlanSummary, RuleProfile, SelectionPolicy } from './api'
 
 const NEW_MATCHUP = 'prospective'
 const rosterNames = (value: string) => value.split(',').map(name => name.trim()).filter(Boolean)
@@ -48,7 +48,7 @@ export function MatchPrep({ bootstrap, plan, plans, busy, create, open }: {
           )) : <p className="muted">Your rehearsal plans will appear here.</p>}
         </div>
       </section>
-      {isNew ? <NewMatchForm events={bootstrap.events ?? []} patches={patches} busy={busy} create={create} /> :
+      {isNew ? <NewMatchForm events={bootstrap.events ?? []} rulesets={bootstrap.rulesets ?? []} policies={bootstrap.selection_policies ?? []} patches={patches} busy={busy} create={create} /> :
         <SetupForm key={match.id} match={match} busy={busy} create={create} />}
     </div>
   )
@@ -72,6 +72,7 @@ function SetupForm({ match, busy, create }: { match: Match; busy: boolean; creat
       player: get('player') || undefined,
       patch: get('patch') || undefined,
       first: get('first'),
+      blue: get('blue') || undefined,
       rosters: Object.keys(rosters).length ? rosters : undefined,
     })
   }
@@ -88,6 +89,9 @@ function SetupForm({ match, busy, create }: { match: Match; busy: boolean; creat
         <label className="field">Priority player <input name="player" placeholder="e.g. Mid laner" maxLength={80} /></label>
         <label className="field">Patch <input name="patch" defaultValue={match.patch} required maxLength={30} /></label>
         <label className="field">First pick <select name="first" aria-label="First pick" defaultValue={match.first}>{match.teams.map(team => <option key={team}>{team}</option>)}</select></label>
+        <label className="field">Blue map side <select name="blue" defaultValue={match.blue || ''}>
+          <option value="">Unknown</option>{match.teams.map(team => <option key={team}>{team}</option>)}
+        </select></label>
         {match.teams.map((team, index) => {
           const roster = match.rosters?.[team]
           const players = Array.isArray(roster) ? roster : Object.values(roster ?? {})
@@ -100,7 +104,10 @@ function SetupForm({ match, busy, create }: { match: Match; busy: boolean; creat
 }
 
 
-function NewMatchForm({ events, patches, busy, create }: { events: string[]; patches: string[]; busy: boolean; create: (input: PlanInput) => void }) {
+function NewMatchForm({ events, rulesets, policies, patches, busy, create }: { events: string[]; rulesets: RuleProfile[]; policies: RuleProfile[]; patches: string[]; busy: boolean; create: (input: PlanInput) => void }) {
+  const [policy, setPolicy] = useState<SelectionPolicy | ''>('')
+  const [firstIndex, setFirstIndex] = useState('0')
+  const [blueIndex, setBlueIndex] = useState('')
   const [left, setLeft] = useState('')
   const [right, setRight] = useState('')
   const teams: [string, string] = [left.trim(), right.trim()]
@@ -118,12 +125,16 @@ function NewMatchForm({ events, patches, busy, create }: { events: string[]; pat
     create({
       match_id: NEW_MATCHUP,
       event: get('event') || undefined,
+      ruleset: get('ruleset') || undefined,
+      selection_policy: policy || undefined,
+      blue: policy === 'blue_first' ? teams[Number(firstIndex)] : blueIndex ? teams[Number(blueIndex)] : undefined,
       disabled: get('disabled') ? get('disabled').split(',').map(value => value.trim()).filter(Boolean) : undefined,
       teams,
       coach_team: teams[get('coach') === '1' ? 1 : 0],
       first: teams[get('first') === '1' ? 1 : 0],
       date: get('date'),
-      format: get('format') === 'Bo3' ? 'Bo3' : 'Bo5',
+      format: get('format') as PlanInput['format'],
+      draft_mode: get('draft_mode') as PlanInput['draft_mode'],
       patch: get('patch'),
       rosters: Object.keys(rosters).length ? rosters : undefined,
     })
@@ -138,19 +149,31 @@ function NewMatchForm({ events, patches, busy, create }: { events: string[]; pat
         <label className="field">Your team <select name="coach" aria-label="Your team">
           {labels.map((label, index) => <option key={index} value={index}>{label}</option>)}
         </select></label>
-        <label className="field">First pick <select name="first" aria-label="First pick">
+        <label className="field">First pick <select name="first" aria-label="First pick" value={firstIndex} onChange={e => setFirstIndex(e.target.value)}>
           {labels.map((label, index) => <option key={index} value={index}>{label}</option>)}
         </select></label>
+        <label className="field">Blue map side <select name="blue" disabled={policy === 'blue_first'} value={policy === 'blue_first' ? firstIndex : blueIndex} onChange={e => setBlueIndex(e.target.value)}>
+          <option value="">Unknown</option>{labels.map((label, index) => <option key={index} value={index}>{label}</option>)}
+        </select></label>
         <label className="field">As-of date <input name="date" type="date" defaultValue={defaultDate} aria-describedby="matchup-date-help" required /></label>
-        <label className="field">Series format <select name="format" aria-label="Series format" defaultValue="Bo5"><option value="Bo3">Best of 3</option><option value="Bo5">Best of 5</option></select></label>
+        <label className="field">Draft format <select name="draft_mode" defaultValue="fearless"><option value="fearless">Hard Fearless</option><option value="standard">Standard tournament draft</option></select></label>
+        <label className="field">Series format <select name="format" aria-label="Series format" defaultValue="Bo5"><option value="Bo1">Best of 1</option><option value="Bo3">Best of 3</option><option value="Bo5">Best of 5</option></select></label>
         <label className="field">Patch <select name="patch" aria-label="Patch" required defaultValue=""><option value="">Choose a patch</option>{patches.map(patch => <option key={patch}>{patch}</option>)}</select></label>
         <p className="match-date-help muted" id="matchup-date-help">Historical evidence ends before the as-of date.</p>
         {events.length > 0 && <label className="field wide">Tournament <select name="event" defaultValue="">
           <option value="">Use patch history</option>{events.map(name => <option key={name}>{name}</option>)}
         </select></label>}
-        {events.length > 0 && <label className="field wide">Disabled champions
+        {policies.length > 0 && <label className="field">Side and pick order <select value={policy} onChange={e => setPolicy(e.target.value as SelectionPolicy | '')}>
+          <option value="">Use event policy</option>
+          {policies.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+        </select></label>}
+        {rulesets.length > 0 && <label className="field">Champion eligibility <select name="ruleset" defaultValue="">
+          <option value="">Use event rules</option>
+          {rulesets.map(rule => <option key={rule.id} value={rule.id}>{rule.label}</option>)}
+        </select></label>}
+        <label className="field wide">Disabled champions
           <input name="disabled" placeholder="Optional, separated by commas" />
-        </label>}
+        </label>
         <details className="matchup-rosters wide">
           <summary>Optional rosters</summary>
           <div className="form-grid">

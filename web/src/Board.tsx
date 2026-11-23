@@ -4,7 +4,7 @@ import {
   Crosshair, GitBranch, GitCompareArrows, Link2, ListFilter, Lock, Pin as PinIcon,
   Play, Plus, ShieldCheck, Sparkles, Workflow,
 } from 'lucide-react'
-import type { NodeState, Pin, Plan } from './api'
+import type { NodeState, Pin, Plan, Selection } from './api'
 import { ActionIcon, LockCount, Portrait } from './common'
 import { branchPath, kindLabel, nodeLabel, phaseLabel, slotGroups, visibleBranches } from './draft'
 import { matchFormat } from './Prep'
@@ -17,6 +17,8 @@ type BoardProps = {
   busy: boolean
   chooseNode: (id: string) => void
   commit: (champion: string | null, first?: string) => void
+  selectGame: (selection: Selection) => void
+  recordWinner: (winner: string) => void
   advance: () => void
   openCustom: (first?: string) => void
   openPin: (champion?: string, game?: number, backup?: string) => void
@@ -24,15 +26,13 @@ type BoardProps = {
   openRules: () => void
 }
 
-export function Board({ plan, state, busy, chooseNode, commit, advance, openCustom, openPin, openCompare, openRules }: BoardProps) {
-  const [first, setFirst] = useState(state.first)
-  const atOpening = state.actions.length === 0 && !state.completed
-  const displayFirst = atOpening ? first : state.first
-  const displaySecond = plan.teams.find(team => team !== displayFirst) || state.second
-  const activeTeam = atOpening ? displayFirst : state.team
-  const betweenGames = state.kind === 'next_game'
-  const move = (champion: string | null) => commit(champion, atOpening ? displayFirst : undefined)
-
+export function Board({ plan, state, busy, chooseNode, commit, selectGame, recordWinner, advance, openCustom, openPin, openCompare, openRules }: BoardProps) {
+  const atOpening = state.actions.length === 0 && state.series_status === 'drafting'
+  const drafting = state.kind === 'pick' || state.kind === 'ban'
+  const [extraDisables, setExtraDisables] = useState((state.game_disabled ?? []).join(', '))
+  const blueFirst = state.selection_policy === 'blue_first'
+  const standard = state.draft_mode === 'standard'
+  const eligible = state.restrictions ?? []
   return (
     <div className="board-stack">
       <GameStrip plan={plan} state={state} select={chooseNode} future={game => openPin(undefined, game)} />
@@ -46,24 +46,39 @@ export function Board({ plan, state, busy, chooseNode, commit, advance, openCust
             </div>
           </div>
           <div className="draft-tools">
-            {atOpening && <label className="first-control">
-              <ArrowLeftRight size={14} />
-              <span>First pick</span>
-              <select value={displayFirst} onChange={event => setFirst(event.target.value)} disabled={busy} aria-label="First pick side">
-                {plan.teams.map(team => <option key={team}>{team}</option>)}
-              </select>
-            </label>}
-            <button type="button" className="button button-small button-quiet" onClick={openRules}><CircleHelp size={15} /> Fearless rules</button>
+            {atOpening && <>
+              <label className="first-control"><ArrowLeftRight size={14} /><span>First pick</span>
+                <select aria-label="First pick team" value={state.first} disabled={busy}
+                  onChange={event => selectGame({ first: event.target.value, blue: blueFirst ? event.target.value : state.blue })}>
+                  {plan.teams.map(team => <option key={team}>{team}</option>)}
+                </select>
+              </label>
+              <label className="first-control"><span>Blue side</span>
+                <select aria-label="Blue map side" value={state.blue ?? ''} disabled={busy || blueFirst}
+                  onChange={event => selectGame({ first: state.first, blue: event.target.value || null })}>
+                  <option value="" disabled={state.game > 1 && state.progression === 'actual' && Boolean(state.selection_right)}>Unknown</option>{plan.teams.map(team => <option key={team}>{team}</option>)}
+                </select>
+              </label>
+            </>}
+            <button type="button" className="button button-small button-quiet" onClick={openRules}><CircleHelp size={15} /> {standard ? 'Standard rules' : 'Fearless rules'}</button>
           </div>
         </div>
-        <DraftMatrix state={state} first={displayFirst} second={displaySecond} team={activeTeam} />
-        {plan.disabled && plan.disabled.length > 0 && (
-          <div className="lock-strip disabled-strip">
-            <div className="lock-strip-label"><Ban size={14} /><strong>Disabled for this series</strong></div>
-            <span className="lock-icons">{plan.disabled.join(', ')}</span>
-          </div>
-        )}
-        <div className="lock-strip">
+        <DraftMatrix state={state} first={state.first} second={state.second} team={state.team} />
+        <details className="game-eligibility">
+          <summary>Champion eligibility{eligible.length > 0 && ` · ${eligible.length} disabled`}</summary>
+          <p className="muted">{state.effective_pool_size} champions eligible before draft bans and series locks. {state.ruleset === 'lec-2026' && 'The 2026 LEC release rule applies. The organizer decides rework eligibility and temporary disables.'}</p>
+          {eligible.length > 0 && <ul>{eligible.map(row => <li key={row.champion + row.reason}>
+            <strong>{row.champion}</strong> · {row.reason.replaceAll('_', ' ')}
+            {row.source?.startsWith('https://') && <> · <a href={row.source} target="_blank" rel="noreferrer">{row.reason === 'release_patch' ? 'Rulebook' : 'Source'}</a></>}
+            {row.release_source && <> · <a href={row.release_source} target="_blank" rel="noreferrer">Patch notes</a></>}
+          </li>)}</ul>}
+          {state.restriction_status === 'unknown' && <p className="muted">Organizer restrictions were unavailable for this game.</p>}
+          {atOpening && <form onSubmit={e => { e.preventDefault(); selectGame({ first: state.first, blue: state.blue, disabled: splitChampions(extraDisables) }) }}>
+            <label className="field">Additional organizer disables<input value={extraDisables} onChange={e => setExtraDisables(e.target.value)} placeholder="Champion names, separated by commas" /></label>
+            <button type="submit" className="button button-small button-secondary" disabled={busy}>Apply restrictions</button>
+          </form>}
+        </details>
+        {standard ? <div className="lock-strip"><strong>Standard draft</strong><span className="muted">Earlier picks return to the pool each game.</span></div> : <div className="lock-strip">
           <div className="lock-strip-label"><Lock size={14} /><strong>Fearless lockout</strong><span className="mono">{state.locked.length}</span></div>
           <div className="lock-icons" aria-label="Champions picked in earlier games">
             {state.locked.length ? state.locked.slice(0, 14).map(champion => (
@@ -72,52 +87,90 @@ export function Board({ plan, state, busy, chooseNode, commit, advance, openCust
           </div>
           {state.locked.length > 14 &&
             <button type="button" className="text-button" onClick={openRules}>+{state.locked.length - 14} more <ChevronRight size={13} /></button>}
-        </div>
+        </div>}
       </section>
       <div className="board-columns">
         <div className="board-main">
-          <BranchMap plan={plan} state={state} select={chooseNode} compare={openCompare} custom={() => openCustom(atOpening ? displayFirst : undefined)} busy={busy} />
+          <BranchMap plan={plan} state={state} select={chooseNode} compare={openCompare} custom={() => openCustom()} busy={busy} />
           <PinPanel pins={state.pins} add={() => openPin()} maxGame={Number(matchFormat(plan).slice(-1)) || 5} game={state.game} />
         </div>
         <div className="board-inspector">
-          {betweenGames ? <NextGame state={state} teams={plan.teams} busy={busy} commit={commit} advance={advance} /> :
+          {!drafting ? <SeriesTransition state={state} teams={plan.teams} busy={busy} selectGame={selectGame} recordWinner={recordWinner} advance={advance} /> :
             <DecisionPanel
               key={state.node_id}
               state={state}
-              team={activeTeam}
+              team={state.team}
               busy={busy}
-              commit={move}
+              commit={commit}
               advance={advance}
-              historical={displayFirst === state.first}
-              custom={() => openCustom(atOpening ? displayFirst : undefined)}
+              historical
+              custom={() => openCustom()}
               pin={state.game < (Number(matchFormat(plan).slice(-1)) || 5) ? champion => openPin(champion) : undefined}
             />}
-          <OutlookPanel outlook={state.outlook} unavailable={plan.source === 'historical' && Boolean(activeTeam && plan.coach_team && activeTeam !== plan.coach_team)} />
+          <OutlookPanel outlook={state.outlook} unavailable={plan.source === 'historical' && Boolean(state.team && plan.coach_team && state.team !== plan.coach_team)} />
         </div>
       </div>
     </div>
   )
 }
 
-function NextGame({ state, teams, busy, commit, advance }: {
-  state: NodeState; teams: string[]; busy: boolean; commit: BoardProps['commit']; advance: () => void
+function splitChampions(names: string) {
+  return names.split(',').map(name => name.trim()).filter(Boolean)
+}
+
+function SeriesTransition({ state, teams, busy, selectGame, recordWinner, advance }: {
+  state: NodeState; teams: string[]; busy: boolean; selectGame: BoardProps['selectGame']
+  recordWinner: BoardProps['recordWinner']; advance: () => void
 }) {
-  const [first, setFirst] = useState(state.first)
+  const [winner, setWinner] = useState('')
+  const [first, setFirst] = useState('')
+  const [blue, setBlue] = useState('')
+  const [choice, setChoice] = useState<Selection['choice']>()
+  const [prep, setPrep] = useState(false)
+  const [disabled, setDisabled] = useState((state.game_disabled ?? []).join(', '))
+  const actualNext = state.series_status === 'awaiting_selection' && state.progression === 'actual'
+  const hasNext = actualNext || state.can_rehearse_next
+  const simulated = !actualNext || prep
+  const blueFirst = state.selection_policy === 'blue_first'
+  const firstSelection = !simulated && state.selection_policy === 'first_selection'
   const game = state.game + 1
+  const heading = state.series_winner && state.series_status === 'clinched' ? `${state.series_winner} won the series`
+    : state.series_status === 'awaiting_result' ? `Game ${state.game} result`
+    : actualNext ? `Game ${game} selection` : `Game ${state.game} draft complete`
   return (
     <section className="panel decision-panel" aria-labelledby="next-game-title">
-      <header className="panel-heading decision-header">
-        <div><span className="section-kicker"><Crosshair size={15} /> Game {state.game} draft complete</span><h2 id="next-game-title">Start Game {game}</h2></div>
-      </header>
+      <header className="panel-heading decision-header"><h2 id="next-game-title">{heading}</h2></header>
       {state.history && <button type="button" className="historical-step" onClick={advance} disabled={busy}>
-        <Play size={15} /><span>Start historical Game {game}</span><ChevronRight size={16} />
+        <Play size={15} /><span>{state.history.kind === 'result' ? 'Reveal historical result' : `Start historical Game ${game}`}</span><ChevronRight size={16} />
       </button>}
-      <form className="next-game-form" onSubmit={event => { event.preventDefault(); commit(null, first) }}>
-        <label className="field">Game {game} first pick <select aria-label={`Game ${game} first pick`} value={first} onChange={event => setFirst(event.target.value)}>
-          {teams.map(team => <option key={team}>{team}</option>)}
+      {state.series_status === 'awaiting_result' && state.progression === 'actual' && <form className="next-game-form" onSubmit={e => { e.preventDefault(); recordWinner(winner) }}>
+        <label className="field">Game winner<select value={winner} onChange={e => setWinner(e.target.value)} required>
+          <option value="">Choose the winning team</option>{teams.map(team => <option key={team}>{team}</option>)}
         </select></label>
-        <button className="button button-accent" type="submit" disabled={busy}>Start Game {game} rehearsal <ArrowRight size={15} /></button>
-      </form>
+        <button className="button button-accent" disabled={busy || !winner}>Record result</button>
+      </form>}
+      {hasNext && <div className="next-game-form">
+        {state.can_rehearse_next && <label className="prep-toggle"><input type="checkbox" checked={prep} onChange={e => setPrep(e.target.checked)} />
+          Explore hypothetical Game {game}</label>}
+        {(actualNext || prep) && <form className="selection-form" onSubmit={e => {
+          e.preventDefault()
+          selectGame({ first, blue: blueFirst ? first : blue || null, hypothetical: simulated, choice: firstSelection ? choice : undefined, disabled: splitChampions(disabled) })
+        }}>
+          {firstSelection && state.selection_right && <label className="field">{state.selection_right} chose<select required value={choice ?? ''} onChange={e => setChoice(e.target.value as Selection['choice'])}>
+            <option value="">Select their choice</option><option value="map_side">Map side</option><option value="first_pick">Pick order</option>
+          </select></label>}
+          <label className="field">Game {game} first pick<select required value={first} onChange={e => setFirst(e.target.value)}>
+            <option value="">Choose team</option>{teams.map(team => <option key={team}>{team}</option>)}
+          </select></label>
+          <label className="field">Game {game} blue side<select disabled={blueFirst} required={firstSelection} value={blueFirst ? first : blue} onChange={e => setBlue(e.target.value)}>
+            <option value="">{firstSelection ? 'Choose team' : 'Unknown'}</option>{teams.map(team => <option key={team}>{team}</option>)}
+          </select></label>
+          <label className="field">Additional organizer disables<input value={disabled} onChange={e => setDisabled(e.target.value)} placeholder="Champion names, separated by commas" /></label>
+          <button className="button button-accent" disabled={busy || !first || (firstSelection && (!blue || !choice))}>
+            {simulated ? `Rehearse Game ${game}` : `Start Game ${game}`} <ArrowRight size={15} />
+          </button>
+        </form>}
+      </div>}
     </section>
   )
 }
@@ -126,7 +179,10 @@ function GameStrip({ plan, state, select, future }: { plan: Plan; state: NodeSta
   const path = branchPath(plan.nodes, state.node_id)
   const format = Number(matchFormat(plan).slice(-1)) || 5
   return (
-    <section className="game-strip" aria-label="Series games">
+    <><div className="series-score" aria-label="Series score">
+      {state.progression === 'hypothetical' && <strong>Hypothetical branch</strong>}
+      <span>{!state.score_complete && 'Partial score · '}{plan.teams.map(team => `${team} ${state.score?.[team] ?? 0}`).join(' — ')}</span>
+    </div><section className="game-strip" aria-label="Series games">
       {Array.from({ length: format }, (_, index) => {
         const game = index + 1
         const node = path.filter(candidate => candidate.game === game).at(-1)
@@ -136,14 +192,14 @@ function GameStrip({ plan, state, select, future }: { plan: Plan; state: NodeSta
         return (
           <button key={game} className={`game-tab ${current ? 'game-active' : ''} ${past ? 'game-past' : ''}`}
             type="button" aria-current={current ? 'step' : undefined} disabled={past && !node}
-            title={past && !node ? 'Earlier game contributes the existing Fearless lockout.' : undefined}
+            title={past && !node ? 'Earlier recorded game.' : undefined}
             onClick={() => node ? select(node.id) : future(game)}>
             <span className="game-tab-main"><span className="game-index">{String(game).padStart(2, '0')}</span><strong>Game {game}</strong></span>
-            <span className="game-tab-meta">{current ? <><span className="status-dot" /> Active draft</> : past ? <><Lock size={11} /> Prior draft</> : pinCount ? <><PinIcon size={11} /> {pinCount} pinned</> : 'Upcoming'}</span>
+            <span className="game-tab-meta">{current ? <><span className="status-dot" /> {state.series_status === 'drafting' ? 'Active draft' : 'Draft complete'}</> : past ? <><Lock size={11} /> Prior draft</> : pinCount ? <><PinIcon size={11} /> {pinCount} pinned</> : state.series_winner ? 'If played' : 'Upcoming'}</span>
           </button>
         )
       })}
-    </section>
+    </section></>
   )
 }
 
@@ -158,16 +214,16 @@ function DraftMatrix({ state, first, second, team }: { state: NodeState; first: 
     <div className="draft-scroll" tabIndex={0} role="region" aria-label="Draft picks and bans">
       <div className="draft-matrix">
         <div className="matrix-labels">
-          <span>Side</span>
+          <span>Team</span>
           {groups.map((group, index) => (
-            <span className={`matrix-label ${index === nextGroup && !state.completed && state.kind !== 'next_game' ? 'phase-active' : ''}`} key={group.name}>
+            <span className={`matrix-label ${index === nextGroup && state.series_status === 'drafting' ? 'phase-active' : ''}`} key={group.name}>
               <ActionIcon kind={group.kind} size={12} /> {group.name}
             </span>
           ))}
         </div>
         {[first, second].map((side, sideIndex) => (
-          <div className={`matrix-row ${sideIndex ? 'side-red' : 'side-blue'}`} key={side}>
-            <div className="team-label"><span className="side-dot" /><div><strong>{side}</strong><small>{sideIndex ? 'SECOND PICK' : 'FIRST PICK'}</small></div></div>
+          <div className={`matrix-row ${side === state.blue ? 'side-blue' : side === state.red ? 'side-red' : 'side-unknown'}`} key={side}>
+            <div className="team-label"><span className="side-dot" /><div><strong>{side}</strong><small>{sideIndex ? 'SECOND PICK' : 'FIRST PICK'}{side === state.blue ? ' · BLUE' : side === state.red ? ' · RED' : ''}</small></div></div>
             {slotGroups(state.actions, side).map((group, groupIndex) => (
               <div className="slot-group" key={groups[groupIndex].name}>
                 {group.map((action, slotIndex) => {
@@ -195,7 +251,7 @@ function BranchMap({ plan, state, select, compare, custom, busy }: {
   const path = useMemo(() => branchPath(plan.nodes, state.node_id), [plan.nodes, state.node_id])
   const onPath = new Set(path.map(node => node.id))
   const layers = visibleBranches(plan.nodes, state.node_id)
-  const nextGames = state.kind === 'next_game' ? plan.nodes.filter(node => node.parent_id === state.node_id && node.game > state.game) : []
+  const nextGames = state.actions.length === 20 ? plan.nodes.filter(node => node.parent_id === state.node_id && node.game > state.game) : []
   if (nextGames.length) layers.push(nextGames)
   const track = useRef<HTMLDivElement>(null)
   const compareReady = plan.nodes.some(node =>
@@ -242,7 +298,7 @@ function BranchMap({ plan, state, select, compare, custom, busy }: {
               })}
             </div>
           ))}
-          {!state.completed && state.kind !== 'next_game' && !plan.nodes.some(node => node.parent_id === state.node_id) &&
+          {(state.kind === 'pick' || state.kind === 'ban') && !plan.nodes.some(node => node.parent_id === state.node_id) &&
             <div className="tree-tier"><span className="tier-line tier-line-new" /><button type="button" className="branch-node branch-new" disabled={busy} onClick={custom}><Plus size={17} /> Add a branch</button></div>}
         </div>
       </div>
@@ -346,9 +402,9 @@ function pinTone(status: string) {
 export function RulesContent({ state }: { state: NodeState }) {
   return (
     <div className="rules-content">
-      <div><Lock size={19} /><section><h3>Across games</h3><p>A champion picked by either team is locked for both teams for the rest of the series. Bans expire at the end of each game.</p></section></div>
+      <div><Lock size={19} /><section><h3>Across games</h3><p>{state.draft_mode === 'standard' ? 'Picks and bans expire at the end of each game.' : 'A champion picked by either team is locked for both teams for the rest of the series. Bans expire at the end of each game.'}</p></section></div>
       <div><Workflow size={19} /><section><h3>In this draft</h3><p>Each picked or banned champion leaves the current legal pool. A passed ban uses the turn and leaves all champions available.</p></section></div>
-      <div><ArrowDown size={19} /><section><h3>At this node</h3><LockCount count={state.locked.length} /><div className="champion-chips">{state.locked.map(champion => <span key={champion}>{champion}</span>)}</div></section></div>
+      {state.draft_mode !== 'standard' && <div><ArrowDown size={19} /><section><h3>At this node</h3><LockCount count={state.locked.length} /><div className="champion-chips">{state.locked.map(champion => <span key={champion}>{champion}</span>)}</div></section></div>}
     </div>
   )
 }

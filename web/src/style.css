@@ -406,3 +406,16 @@ a { color: inherit }
 @media (max-width: 620px) {
   .match-context > strong, .prospective-coach, .prospective-coverage { max-width: 100% }
 }
+
+.series-score { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; color: var(--secondary); font: 12px var(--mono) }
+.series-score strong { color: var(--amber); font-weight: 500 }
+.matrix-row.side-unknown { --side: var(--muted) }
+.matrix-row.side-blue { --side: #72b0e2 }
+.draft-heading, .draft-tools { flex-wrap: wrap }
+.game-eligibility { border-top: 1px solid var(--line); padding: 10px 16px; color: var(--secondary); font-size: 13px }
+.game-eligibility summary { cursor: pointer }
+.game-eligibility ul { margin: 10px 0; padding-left: 18px }
+.game-eligibility form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 10px }
+.game-eligibility form .field { flex: 1 1 240px; min-width: 0 }
+.selection-form { display: grid; gap: 10px }
+.prep-toggle { display: flex; align-items: center; gap: 8px; color: var(--secondary); font-size: 13px }

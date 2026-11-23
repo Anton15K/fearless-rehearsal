@@ -1,14 +1,16 @@
 """Local match settings and a deliberately small, entirely authored demo."""
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date
 import json
 from pathlib import Path
+import re
 
 from fearless.app_directory import TeamDirectory, team_key
 from fearless.app_forecast import HistoricalFrequencies
 from fearless.app_error import RehearsalError
+from fearless.event_series import utc
 from fearless.rules import DRAFT_LENGTH, DraftAction, schedule, series_locks, validate_action
 
 
@@ -17,6 +19,23 @@ PROSPECTIVE_ID = "prospective"
 HISTORICAL_SERIES = {"3000378": "Bo5", "994442840205359781": "Bo3"}
 DEMO_PATCH = "16.17"
 DEMO_TEAMS = ("Cloud9 Kia", "LYON")
+RULESETS = json.loads(Path(__file__).with_name("assets").joinpath("eligibility.json").read_text(encoding="utf8"))
+SELECTION_POLICIES = {
+    "organizer": {"label": "Organizer-defined", "source": None},
+    "first_selection": {
+        "label": "First Selection (previous game’s loser)",
+        "source": "https://lolesports.com/en-GB/news/season-start-2026-lol-esports",
+    },
+    "blue_first": {"label": "Classic blue side picks first", "source": None},
+}
+LEC_2026_EVENT = re.compile(
+    r"lec(?: 2026)?(?: (?:lec )?(?:versus|spring|summer|winter|kickoff)(?: split)?"
+    r"(?: 2026)?(?: (?:regular season|playoffs))?)?"
+)
+LCS_2026_EVENT = re.compile(
+    r"lcs(?: 2026)?(?: (?:lock in|spring|summer|split [12]|championship)"
+    r"(?: split)?(?: 2026)?(?: (?:regular season|playoffs))?)?"
+)
 DEMO_POOL = tuple(sorted({
     "Aatrox", "Ahri", "Akali", "Akshan", "Alistar", "Ambessa", "Amumu", "Anivia", "Annie",
     "Aphelios", "Ashe", "Aurelion Sol", "Aurora", "Azir", "Bard", "Bel'Veth", "Blitzcrank",
@@ -72,7 +91,7 @@ def _demo() -> Match:
         metadata={
             "id": DEMO_ID, "title": f"{cloud9} vs {lyon}", "teams": list(DEMO_TEAMS),
             "source": "illustrative", "date": "2026-10-03", "patch": DEMO_PATCH,
-            "format": "Bo5", "rosters": rosters, "first": lyon,
+            "format": "Bo5", "draft_mode": "fearless", "rosters": rosters, "first": lyon,
         },
         region="NA",
         team_ids={team: team for team in DEMO_TEAMS},
@@ -88,13 +107,13 @@ def _demo() -> Match:
     )
 
 
-def _series_matches(games: list[dict], catalog: dict[str, tuple[str, ...]]) -> list[Match]:
+def _series_matches(games: list[dict], catalog: dict[str, tuple[str, ...]] | None) -> list[Match]:
     grouped = defaultdict(list)
     for row in games:
         series = str(row.get("series_id", ""))
         if (
             series in HISTORICAL_SERIES and row.get("eligible", True)
-            and row.get("finished", True) and row.get("fearless", True)
+            and row.get("finished", True)
         ):
             grouped[series].append(row)
 
@@ -102,63 +121,212 @@ def _series_matches(games: list[dict], catalog: dict[str, tuple[str, ...]]) -> l
     for series_id, rows in grouped.items():
         try:
             match = _series_match(series_id, rows, catalog)
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, RehearsalError):
             continue
         if match is not None:
             matches.append(match)
     return matches
 
 
-def _series_match(series_id: str, rows: list[dict], catalog: dict[str, tuple[str, ...]]) -> Match | None:
+def ruleset_for(event: str | None, as_of: str, requested: str | None = None) -> str:
+    if requested is not None:
+        if not isinstance(requested, str) or requested not in RULESETS:
+            raise RehearsalError(422, "Choose a supported tournament ruleset.")
+        return requested
+    if event is not None and not isinstance(event, str):
+        raise RehearsalError(422, "Enter a valid tournament name.")
+    words = " ".join(re.findall(r"[a-z0-9]+", (event or "").casefold()))
+    if as_of.startswith("2026-") and LEC_2026_EVENT.fullmatch(words):
+        return "lec-2026"
+    return "manual"
+
+
+def selection_policy_for(event: str | None, as_of: str, requested: str | None) -> str:
+    if requested is not None:
+        if not isinstance(requested, str) or requested not in SELECTION_POLICIES:
+            raise RehearsalError(422, "Choose a supported opening selection policy.")
+        return requested
+    words = " ".join(re.findall(r"[a-z0-9]+", (event or "").casefold()))
+    if as_of.startswith("2026-") and (LEC_2026_EVENT.fullmatch(words) or LCS_2026_EVENT.fullmatch(words)):
+        return "first_selection"
+    return "organizer"
+
+
+def normalize_disables(client_pool, values) -> list[str]:
+    if not isinstance(values, (list, tuple)) or any(not isinstance(name, str) for name in values):
+        raise RehearsalError(422, "Choose disabled champions from this patch.")
+    by_name = {name.casefold(): name for name in client_pool}
+    names = {name.casefold().strip() for name in values}
+    if not names <= by_name.keys() or names == by_name.keys():
+        raise RehearsalError(422, "Choose disabled champions from this patch and leave champions available.")
+    return [by_name[name] for name in sorted(names)]
+
+
+def eligibility(client_pool, patch, ruleset, *, manual=(), recorded=None, source=None, historical=False) -> dict:
+    profile = RULESETS[ruleset]
+    restrictions = {
+        name: {"champion": name, "reason": "manual", "source": None}
+        for name in normalize_disables(client_pool, manual)
+    }
+    for release in profile.get("releases", ()):
+        name = release["champion"]
+        if release["patch"] == patch and name in client_pool:
+            restrictions[name] = {
+                "champion": name, "reason": "release_patch", "source": profile["source"],
+                "release_source": release["source"],
+            }
+    if recorded is not None:
+        for name in normalize_disables(client_pool, recorded):
+            restrictions[name] = {"champion": name, "reason": "recorded", "source": source}
+    if recorded is not None:
+        status = "recorded"
+    elif ruleset != "manual":
+        status = "ruleset"
+    else:
+        status = "unknown" if historical else "manual"
+    pool = [champion for champion in client_pool if champion not in restrictions]
+    if not pool:
+        raise RehearsalError(422, "Leave champions available after tournament restrictions.")
+    return {
+        "pool": pool, "client_pool": list(client_pool), "ruleset": ruleset,
+        "disabled": sorted(restrictions, key=str.casefold), "restriction_status": status,
+        "restrictions": sorted(restrictions.values(), key=lambda item: item["champion"].casefold()),
+    }
+
+
+def _recorded_sides(sides, team_names):
+    if isinstance(sides, dict) and set(sides) == team_names.keys() and set(sides.values()) == {"blue", "red"}:
+        return sides
+    return {}
+
+
+def _series_format(series_id: str, rows: list[dict]) -> str:
+    formats = {row["format"] for row in rows if row.get("format") is not None}
+    formats.update(f"Bo{row['best_of']}" for row in rows if row.get("best_of") is not None)
+    if len(formats) > 1:
+        raise ValueError("Conflicting historical series formats.")
+    return next(iter(formats)) if formats else HISTORICAL_SERIES[series_id]
+
+
+def _validate_game_order(rows: list[dict], teams: set[str], best_of: int) -> None:
+    wins = Counter()
+    clinch = best_of // 2 + 1
+    previous_date = previous_start = previous_finish = None
+    for index, row in enumerate(rows, 1):
+        if {row["first"], row["second"]} != teams:
+            raise ValueError("The same teams must appear in every game.")
+        winner = row.get("winner")
+        if winner is not None:
+            if winner not in teams:
+                raise ValueError("The game winner must be one of the teams.")
+            wins[winner] += 1
+            if wins[winner] >= clinch and index < len(rows):
+                raise ValueError("The series was clinched before the final recorded game.")
+
+        game_date = date.fromisoformat(row["date"])
+        if previous_date is not None and game_date < previous_date:
+            raise ValueError("Historical game dates are out of order.")
+        previous_date = game_date
+
+        drafted, started, finished = (
+            utc(row[key]) if row.get(key) is not None else None
+            for key in ("drafted_at", "started_at", "finished_at")
+        )
+        if drafted and started and started < drafted:
+            raise ValueError("A game started before its draft.")
+        start = drafted or started
+        if start and (
+            (previous_start and start <= previous_start) or (previous_finish and start < previous_finish)
+        ):
+            raise ValueError("Historical game starts are out of order.")
+        latest_start = started or drafted or previous_start
+        if finished and (
+            (latest_start and finished <= latest_start) or (previous_finish and finished <= previous_finish)
+        ):
+            raise ValueError("Historical game finishes are out of order.")
+        previous_start = latest_start
+        previous_finish = finished or previous_finish
+
+
+def _series_match(series_id: str, rows: list[dict], catalog: dict[str, tuple[str, ...]] | None) -> Match | None:
     rows.sort(key=lambda row: row["game_number"])
-    if len(rows) < 2 or [row["game_number"] for row in rows] != list(range(1, len(rows) + 1)):
+    if not rows or [row["game_number"] for row in rows] != list(range(1, len(rows) + 1)):
         return None
-    earlier, opening = rows[:2]
+    earlier = rows[0]
+    game_format = _series_format(series_id, rows)
+    if game_format not in {"Bo1", "Bo3", "Bo5"}:
+        return None
+    best_of = int(game_format[-1])
+    opening_game = 1 if best_of == 1 else 2
+    if not opening_game <= len(rows) <= best_of:
+        return None
+    opening = rows[opening_game - 1]
+    fearless = earlier.get("fearless", True)
+    if type(fearless) is not bool or any(row.get("fearless", True) is not fearless for row in rows):
+        return None
     team_ids = {earlier["team_names"][team]: team for team in (earlier["first"], earlier["second"])}
     if len(team_ids) != 2:
         return None
     team_names = {team: name for name, team in team_ids.items()}
+    _validate_game_order(rows, set(team_names), best_of)
     replay = {}
     completed = []
     for row in rows:
         first, second = team_names[row["first"]], team_names[row["second"]]
-        pool = catalog.get(row["patch"], DEMO_POOL)
-        locked = series_locks(completed)
+        patch = row["patch"]
+        if not isinstance(patch, str) or not patch or (catalog is not None and patch not in catalog):
+            return None
+        pool = DEMO_POOL if catalog is None else catalog[patch]
+        game_date = date.fromisoformat(row["date"]).isoformat()
+        ruleset = ruleset_for(row.get("event"), game_date)
+        selected = eligibility(pool, patch, ruleset,
+                               recorded=row.get("disabled"), source=row.get("disabled_source") or row.get("source"),
+                               historical=True)
+        locked = series_locks(completed, fearless=fearless)
         actions = []
         for action in row["actions"]:
             team, kind, champion = team_names[action["team"]], action["kind"], action["champion"]
-            validate_action(pool, locked, actions, first, second, team, kind, champion)
+            validate_action(selected["pool"], locked, actions, first, second, team, kind, champion)
             actions.append({"team": team, "kind": kind, "champion": champion})
-        if len(actions) != DRAFT_LENGTH or row["patch"] != opening["patch"]:
+        if len(actions) != DRAFT_LENGTH:
             return None
-        replay[row["game_number"]] = {"first": first, "actions": actions}
+        sides = _recorded_sides(row.get("sides"), team_names)
+        blue = next((team_names[team] for team, side in sides.items() if side == "blue"), None)
+        replay[row["game_number"]] = {
+            "first": first, "actions": actions, "blue": blue, "sides": sides,
+            "winner": team_names.get(row.get("winner")), "patch": patch, "date": game_date,
+            "eligibility": selected,
+        }
         completed.append(actions)
 
-    # Game 1 is already complete. Its lineups are available at this starting position.
+    # Only a completed prior game's lineup is available as forecast evidence.
     players = {}
-    for team, roster in earlier.get("rosters", {}).items():
+    prior = [replay.pop(1)] if opening_game == 2 else []
+    lineups = earlier.get("rosters", {}) if prior else {}
+    for team, roster in lineups.items():
         if team in team_names:
             players[team_names[team]] = {
                 player["player_name"].strip(): str(player["player"])
                 for player in roster if player.get("player_name") and player.get("player")
             }
-    game_format = earlier.get("format", HISTORICAL_SERIES[series_id])
-    if game_format not in {"Bo3", "Bo5"} or len(completed) > int(game_format[-1]):
-        return None
     coach = next((name for name in team_ids if "cloud9" in name.lower()), next(iter(team_ids)))
     teams = [coach, next(name for name in team_ids if name != coach)]
     return Match(
         metadata={
             "id": series_id, "title": " vs ".join(teams), "teams": teams,
             "source": "historical", "date": date.fromisoformat(opening["date"]).isoformat(),
-            "patch": opening["patch"], "format": game_format, "first": replay[2]["first"],
+            "patch": opening["patch"], "format": game_format, "first": replay[opening_game]["first"],
+            "draft_mode": "fearless" if fearless else "standard",
             "rosters": {team: list(roster) for team, roster in players.items()},
             "provenance": opening.get("source"), "event": opening.get("event"),
+            "blue": replay[opening_game]["blue"], "sides": replay[opening_game]["sides"],
+            "prior_winners": [game["winner"] for game in prior], "prior_sides": [game["sides"] for game in prior],
+            "ruleset": replay[opening_game]["eligibility"]["ruleset"],
         },
         region=opening.get("region", ""),
         team_ids=team_ids,
         player_ids=players,
-        previous=[replay.pop(1)["actions"]],
+        previous=[game["actions"] for game in prior],
         historical=replay,
         opening=[],
         coach_team=coach,
@@ -172,6 +340,7 @@ class MatchCatalog:
             patch: tuple(sorted(set(names), key=str.casefold))
             for patch, names in raw.items()
         }
+        self._historical_patches = self.patches if champions is not None else None
         self.matches = {DEMO_ID: _demo()}
         history = []
         self.teams = TeamDirectory()
@@ -181,7 +350,7 @@ class MatchCatalog:
             with path.open(encoding="utf8") as source:
                 rows = [json.loads(line) for line in source if line.strip()]
             self.matches.update({
-                match.metadata["id"]: match for match in _series_matches(rows, self.patches)
+                match.metadata["id"]: match for match in _series_matches(rows, self._historical_patches)
             })
             self.teams.add(rows, preferred=path == games)
             history.extend(rows)
@@ -193,7 +362,7 @@ class MatchCatalog:
         if patch == DEMO_PATCH and match.metadata["source"] == "illustrative":
             return DEMO_POOL
         pool = self.patches.get(patch)
-        if pool is None and patch == match.metadata["patch"]:
+        if pool is None and self._historical_patches is None and patch == match.metadata["patch"]:
             return DEMO_POOL
         return pool
 
@@ -211,8 +380,8 @@ class MatchCatalog:
             raise RehearsalError(422, "Choose a coach side and first pick from the matchup.")
 
         game_format = settings.get("format")
-        if game_format not in ("Bo3", "Bo5"):
-            raise RehearsalError(422, "Choose a best-of-three or best-of-five series.")
+        if game_format not in ("Bo1", "Bo3", "Bo5"):
+            raise RehearsalError(422, "Choose a best-of-one, best-of-three or best-of-five series.")
         patch = settings.get("patch")
         if not isinstance(patch, str) or patch not in {*self.patches, DEMO_PATCH}:
             raise RehearsalError(422, "Choose a patch from the champion catalog.")
@@ -256,6 +425,9 @@ class MatchCatalog:
             "champions": sorted(champions, key=str.casefold),
             "matches": matches,
             "default_match": DEMO_ID,
+            "rulesets": [{"id": key, "label": value["label"], "source": value["source"]}
+                         for key, value in RULESETS.items()],
+            "selection_policies": [{"id": key, **profile} for key, profile in SELECTION_POLICIES.items()],
             "patches": sorted(
                 {*self.patches, DEMO_PATCH},
                 key=lambda patch: tuple(int(part) if part.isdigit() else -1 for part in patch.split(".")),

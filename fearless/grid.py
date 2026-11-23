@@ -151,6 +151,7 @@ class Feed:
     games: dict = field(default_factory=dict)
     counts: Counter = field(default_factory=Counter)
     ruleset: str | None = None
+    best_of: int | None = None
     series_teams: list = field(default_factory=list)
 
 
@@ -209,6 +210,9 @@ def draft_game_id(event, active_id):
 
 
 def capture_state(feed, state, rolled_back):
+    fmt = state.get("format")
+    if fmt in ("best-of-1", "best-of-3", "best-of-5"):
+        feed.best_of = int(fmt[-1])
     if isinstance(state.get("teams"), list):
         feed.series_teams = objects(state["teams"])
     if state.get("draftFormat"):

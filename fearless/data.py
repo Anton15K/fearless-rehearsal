@@ -297,11 +297,18 @@ def normalize_series(series, feed, rolled_back, game_metadata, roster_metadata, 
             if played_picks := corroborated_picks(actions, rosters):
                 completed[number] = played_picks
                 audit["corroborated_prior_drafts"] += 1
+        winners = {identity(t) for t in objects(game.state.get("teams")) if t.get("won") is True}
+        if value := identity(metadata.get("winner_team_id")):
+            winners.add(value)
+        if len(winners) > 1 or winners - teams.keys():
+            issues.add("conflicting_game_winner")
+        winner = next(iter(winners)) if len(winners) == 1 and winners <= teams.keys() and finished else None
         yield {
             "series_id": series_id, "game_id": game_id, "game_number": number, "date": game_date,
             "patch": patch, "region": region, "event": event, "stage": series.get("stage"),
             "first": first, "second": second, "actions": actions, "rosters": rosters,
             "fearless": fearless, "ruleset": ruleset, "rules_source": rules_source,
+            "winner": winner, "best_of": feed.best_of,
             "team_names": {team: fields.get("name") or team for team, fields in teams.items()},
             "sides": {team: fields.get("side") for team, fields in teams.items()},
             "drafted_at": drafted_at, "started_at": started_at, "finished_at": game.finished_at,

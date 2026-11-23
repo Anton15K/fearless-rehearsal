@@ -1,0 +1,17 @@
+{
+  "manual": {
+    "label": "Manual tournament pool",
+    "source": null
+  },
+  "lec-2026": {
+    "label": "LEC 2026",
+    "source": "https://cdn.sanity.io/files/dsfx7636/news_live/c9b1ec234a036d08d794c71fd3ab6710c8f46a78.pdf#page=36",
+    "releases": [
+      {
+        "champion": "Locke",
+        "patch": "16.13",
+        "source": "https://www.leagueoflegends.com/en-us/news/game-updates/league-of-legends-patch-26-13-notes/"
+      }
+    ]
+  }
+}

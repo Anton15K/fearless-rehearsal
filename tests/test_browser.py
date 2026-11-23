@@ -35,3 +35,53 @@ def test_browser_adapter_uses_same_forks_and_saved_briefs():
     assert saved["brief"][0]["text"] == "Keep Poppy free for Blaber."
     assert request(f"{base}/actions", {"parent_id": plan["root_id"], "champion": "not-a-champion"})["status"] == 422
     assert len(request("/plans")["data"]) == 1
+
+
+def test_browser_reopens_selection_result_and_legacy_fixture():
+    catalog = MatchCatalog(None, None)
+    app = BrowserRehearsal(catalog)
+    stored = []
+
+    def request(path, body=None):
+        nonlocal stored
+        encoded = json.dumps(body) if body is not None else None
+        response = json.loads(app.request(path, encoded, json.dumps(stored)))
+        assert "status" not in response, response
+        if "plans" in response:
+            stored = response["plans"]
+        return response["data"]
+
+    demos = request("/bootstrap")
+    legacy = request("/plans", {"match_id": demos["default_match"]})
+    del stored[0]["prior_winners"]
+    del stored[0]["draft_mode"]
+    del stored[0]["selection_policy"]
+    del stored[0]["nodes"][0]["blue"]
+    old_opening = request(f"/plans/{legacy['id']}/nodes/{legacy['root_id']}")
+    assert old_opening["draft_mode"] == "fearless"
+    assert old_opening["blue"] is None
+    assert old_opening["red"] is None
+    assert old_opening["score_complete"] is False
+    assert old_opening["progression"] == "hypothetical"
+
+    plan = request("/plans", {
+        "match_id": "prospective", "teams": ["Alpha", "Beta"], "coach_team": "Alpha",
+        "format": "Bo3", "patch": "16.17", "date": "2026-11-23", "first": "Alpha",
+        "selection_policy": "first_selection",
+    })
+    url = f"/plans/{plan['id']}"
+    selection = request(f"{url}/selection", {"parent_id": plan["root_id"], "first": "Beta", "blue": "Alpha"})
+    active = request(f"{url}/nodes/{selection['selected_node']}")
+    assert (active["first"], active["blue"], active["team"]) == ("Beta", "Alpha", "Beta")
+    while active["kind"] in {"pick", "ban"}:
+        drafted = request(f"{url}/actions", {
+            "parent_id": active["node_id"], "champion": active["legal"][0] if active["kind"] == "pick" else None,
+        })
+        active = request(f"{url}/nodes/{drafted['selected_node']}")
+    saved = request(f"{url}/result", {"parent_id": active["node_id"], "winner": "Alpha"})
+    reopened = BrowserRehearsal(catalog)
+    persisted = json.loads(reopened.request(f"{url}/nodes/{saved['selected_node']}", None, json.dumps(stored)))["data"]
+    assert persisted["game_winner"] == "Alpha"
+    assert persisted["score"] == {"Alpha": 1, "Beta": 0}
+    assert persisted["selection_policy"] == "first_selection"
+    assert persisted["selection_right"] == "Beta"

@@ -96,7 +96,7 @@ function App() {
     const controller = new AbortController()
     setNodeError('')
     api.node(planId, selected, controller.signal)
-      .then(setState)
+      .then(position => { if (!controller.signal.aborted) setState(position) })
       .catch(reason => { if (!controller.signal.aborted) setNodeError(reason.message) })
     return () => controller.abort()
   }, [planId, selected, refresh])
@@ -138,7 +138,8 @@ function App() {
   }
 
   function changeDraft(result: Plan) {
-    if (result.selected_node !== selected) setState(null)
+    setState(null)
+    if (result.selected_node === selected) setRefresh(current => current + 1)
     applyPlan(result, result.selected_node)
     setModal(null)
   }
@@ -160,8 +161,8 @@ function App() {
     .filter(([, evidence]) => evidence === null).map(([team]) => team)
   const ready = Boolean(bootstrap && plan)
   const tab = tabs.find(item => item.id === view)!
-  const context = [plan && `Patch ${plan.patch}`, plan && matchFormat(match ?? plan), plan?.date && (prospective ? `As of ${plan.date}` : plan.date)].filter(Boolean)
   const current = state?.node_id === selected ? state : null
+  const context = [plan && `Patch ${current?.patch ?? plan.patch}`, plan && matchFormat(match ?? plan), plan?.date && (prospective ? `As of ${plan.date}` : plan.date)].filter(Boolean)
 
   return (
     <>
@@ -187,7 +188,7 @@ function App() {
             {view === 'board' && plan?.priority && <p className="priority-line"><CircleDot size={14} />{plan.priority}</p>}
           </div>
           {plan && <div className="match-context">
-            {(historical || scenario === 'illustrative') && <span className={`source-label ${historical ? 'source-historical' : ''}`}><Radio size={12} /> {historical ? (current?.history ? 'Historical replay' : 'Historical match · Rehearsal') : 'Illustrative scenario'}</span>}
+            {(historical || scenario === 'illustrative') && <span className={`source-label ${historical ? 'source-historical' : ''}`}><Radio size={12} /> {historical ? (current?.progression === 'hypothetical' ? 'Historical match · Rehearsal' : 'Historical replay') : 'Illustrative scenario'}</span>}
             {prospective && plan.coach_team && <span className="prospective-coach">Your team · {plan.coach_team}</span>}
             <strong>{match?.title || plan.title}</strong>
             {plan.event && <span className="match-event">{plan.event}</span>}
@@ -207,6 +208,8 @@ function App() {
                   <><LoaderCircle className="spin" size={21} /> Loading draft position…</>}
               </div>}
               {view === 'board' && current && !nodeError && <Board key={`${plan.id}-${current.node_id}`} plan={plan} state={current} busy={busy} chooseNode={chooseNode} commit={commit}
+                selectGame={selection => void mutate(() => api.select(plan.id, current.node_id, selection), changeDraft)}
+                recordWinner={winner => void mutate(() => api.result(plan.id, current.node_id, winner), changeDraft)}
                 advance={() => void mutate(() => api.advance(plan.id, current.node_id), changeDraft)}
                 openCustom={first => setModal({ type: 'champion', first })}
                 openPin={openPin} openCompare={() => setModal({ type: 'compare' })} openRules={() => setModal({ type: 'rules' })} />}
@@ -217,14 +220,14 @@ function App() {
                   {modal.type === 'champion' && <ChampionDialog state={current} busy={busy} close={() => setModal(null)} select={champion => commit(champion, modal.first)} />}
                   {modal.type === 'pin' && <PinDialog plan={plan} state={current} champions={bootstrap.champions} champion={modal.champion}
                     targetGame={modal.game} backup={modal.backup} busy={busy} close={() => setModal(null)}
-                    save={pin => void mutate(() => api.pin(plan.id, pin), updated => {
+                    save={pin => void mutate(() => api.pin(plan.id, { ...pin, node_id: current.node_id }), updated => {
                       applyPlan(updated, current.node_id)
                       setRefresh(value => value + 1)
                       setModal(null)
                     })} />}
                   {modal.type === 'compare' && <CompareDialog plan={plan} current={current.node_id} close={() => setModal(null)}
                     open={id => { setModal(null); chooseNode(id) }} />}
-                  {modal.type === 'rules' && <Dialog title="Fearless Draft rules" close={() => setModal(null)}><RulesContent state={current} /></Dialog>}
+                  {modal.type === 'rules' && <Dialog title={current.draft_mode === 'standard' ? 'Standard draft rules' : 'Fearless Draft rules'} close={() => setModal(null)}><RulesContent state={current} /></Dialog>}
                 </>
               )}
             </>

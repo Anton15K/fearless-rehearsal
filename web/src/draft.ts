@@ -9,6 +9,8 @@ export type DraftNode = Action & {
   id: string
   parent_id: string | null
   game: number
+  first?: string
+  blue?: string | null
 }
 
 export function branchPath(nodes: DraftNode[], selectedId: string): DraftNode[] {
@@ -54,12 +56,14 @@ export function kindLabel(kind: string) {
   if (kind === 'ban') return 'Ban'
   if (kind === 'pick') return 'Pick'
   if (kind === 'start' || kind === 'root') return 'Opening position'
+  if (kind === 'result') return 'Game result'
   if (kind === 'next_game') return 'Game draft complete'
   if (kind === 'complete') return 'Series complete'
   return kind.charAt(0).toUpperCase() + kind.slice(1)
 }
 
 export function phaseLabel(kind: string, actions: Action[]) {
+  if (kind === 'result') return 'Game result'
   if (kind === 'next_game') return 'Game draft complete'
   if (kind === 'complete') return 'Series complete'
   const count = actions.length
@@ -70,6 +74,8 @@ export function phaseLabel(kind: string, actions: Action[]) {
 }
 
 export function nodeLabel(node: DraftNode) {
+  if (node.kind === 'result') return node.team ? `${node.team} won` : 'Game result'
+  if (node.kind === 'selection') return [`${node.first} first pick`, node.blue && `${node.blue} blue side`].filter(Boolean).join(' · ')
   if (node.champion) return node.champion
   if (node.kind === 'ban') return 'Ban passed'
   if (node.kind === 'pick') return 'Pick'
