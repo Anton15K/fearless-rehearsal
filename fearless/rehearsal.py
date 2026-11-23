@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from fearless.app_catalog import Match, MatchCatalog, PROSPECTIVE_ID
+from fearless.app_catalog import Match, MatchCatalog, PROSPECTIVE_ID, eligibility, normalize_disables, ruleset_for
 from fearless.app_error import RehearsalError
 from fearless.rules import (
     DRAFT_LENGTH,
@@ -21,7 +21,7 @@ def create_catalog_plan(catalog: MatchCatalog, settings: dict) -> dict:
     if settings.get("match_id") == PROSPECTIVE_ID:
         match = catalog.prospective(settings)
     else:
-        if any(settings.get(field) is not None for field in ("teams", "coach_team", "date", "format", "event", "disabled")):
+        if any(settings.get(field) is not None for field in ("teams", "coach_team", "date", "format", "event", "disabled", "ruleset")):
             raise RehearsalError(422, "Choose New matchup to set the teams and series details.")
         match = catalog.matches.get(settings.get("match_id"))
         if match is None:
@@ -30,15 +30,18 @@ def create_catalog_plan(catalog: MatchCatalog, settings: dict) -> dict:
     pool = catalog.pool(match, patch)
     if pool is None:
         raise RehearsalError(422, "The champion catalog does not include that patch.")
-    disabled = ()
-    if settings.get("disabled"):
-        by_name = {c.casefold(): c for c in pool}
-        names = {name.casefold().strip() for name in settings["disabled"]}
-        if not names <= by_name.keys() or names == by_name.keys():
-            raise RehearsalError(422, "Choose disabled champions from this patch and leave champions available.")
-        disabled = tuple(by_name[name] for name in sorted(names))
-        pool = tuple(c for c in pool if c.casefold() not in names)
-    return new_plan(match, pool, settings, disabled=disabled)
+    ruleset = ruleset_for(match.metadata.get("event"), match.metadata["date"], settings.get("ruleset"))
+    manual = settings.get("disabled")
+    if manual is not None and (not isinstance(manual, list) or len(manual) > 30):
+        raise RehearsalError(422, "Select up to 30 additional disables.")
+    base = eligibility(pool, patch, ruleset, manual=manual if manual is not None else (),
+                       historical=match.metadata["source"] == "historical")
+    plan = new_plan(match, tuple(base["pool"]), settings, disabled=tuple(base["disabled"]))
+    plan.update(base)
+    if patch == match.metadata["patch"]:
+        plan["game_eligibility"] = {str(game): game_data["eligibility"]
+                                    for game, game_data in match.historical.items()}
+    return plan
 
 
 def new_plan(match: Match, pool: tuple[str, ...], settings: dict, *, disabled: tuple[str, ...] = ()) -> dict:
@@ -116,6 +119,55 @@ def _find_node(plan: dict, node_id: str) -> dict:
         if node["id"] == node_id:
             return node
     raise RehearsalError(404, "Draft position not found in this plan.")
+
+
+def _base_eligibility(plan: dict, game: int) -> dict:
+    row = plan.get("game_eligibility", {}).get(str(game))
+    return row if row is not None else plan
+
+
+def inherited_game_disabled(plan: dict, game: int, node_id: str | None) -> list[str]:
+    nodes = {node["id"]: node for node in plan.get("nodes", ())}
+    cursor = nodes.get(node_id)
+    while cursor is not None:
+        if cursor["game"] <= game and "game_disabled" in cursor:
+            return cursor["game_disabled"]
+        cursor = nodes.get(cursor["parent_id"])
+    return []
+
+
+def validate_game_disabled(plan: dict, game: int, values: list[str]) -> list[str]:
+    base = _base_eligibility(plan, game)
+    values = normalize_disables(base.get("client_pool", [*base["pool"], *base.get("disabled", ())]), values)
+    if len(values) > 30 or not set(base["pool"]) - set(values):
+        raise RehearsalError(422, "Select up to 30 additional disables and leave champions available.")
+    return values
+
+
+def pool_at(plan: dict, game: int, node_id: str | None = None) -> list[str]:
+    base = _base_eligibility(plan, game)
+    disabled = set(inherited_game_disabled(plan, game, node_id or plan.get("selected_node")))
+    return [champion for champion in base["pool"] if champion not in disabled]
+
+
+def _public_eligibility(plan: dict, game: int, node_id: str) -> dict:
+    base = _base_eligibility(plan, game)
+    disabled = base.get("disabled", [])
+    game_disabled = inherited_game_disabled(plan, game, node_id)
+    restrictions = base.get("restrictions", [
+        {"champion": name, "reason": "manual", "source": None} for name in disabled
+    ])
+    extra = [name for name in game_disabled if name not in disabled]
+    return {
+        "ruleset": base.get("ruleset", "manual"), "game_disabled": game_disabled,
+        "restriction_status": base.get("restriction_status", "unknown" if plan["source"] == "historical" else "manual"),
+        "disabled": sorted(set(disabled).union(game_disabled), key=str.casefold),
+        "restrictions": sorted([*restrictions, *[
+            {"champion": name, "reason": "organizer", "source": None} for name in extra
+        ]], key=lambda item: item["champion"].casefold()),
+        "client_pool_size": len(base.get("client_pool", ())) or len(base["pool"]) + len(disabled),
+        "effective_pool_size": len(pool_at(plan, game, node_id)),
+    }
 
 
 def _check_team(teams: list[str], team: str) -> None:
@@ -218,7 +270,7 @@ def apply_action(
         other = next(team for team in plan["teams"] if team != order)
         team, kind = schedule(order, other)[len(pos.actions)]
         try:
-            validate_action(plan["pool"], pos.locked, pos.current, order, other, team, kind, champion)
+            validate_action(pool_at(plan, pos.game, parent_id), pos.locked, pos.current, order, other, team, kind, champion)
         except ValueError as error:
             raise RehearsalError(422, str(error)) from error
         game = pos.game
@@ -258,12 +310,14 @@ def _pin_team(plan: dict, player: str) -> str:
 
 
 def save_pin(plan: dict, pin: dict) -> None:
-    _check_champion(plan, pin["champion"])
-    _check_champion(plan, pin["backup"])
-    if pin["champion"] == pin["backup"]:
-        raise RehearsalError(422, "Choose a different champion as the backup.")
     if not len(plan["prior"]) < pin["game"] <= int(plan["format"][-1]):
         raise RehearsalError(422, f"Choose a target game in the remaining {plan['format']} draft.")
+    node_id = pin.get("node_id") or plan["selected_node"]
+    available = pool_at(plan, pin["game"], node_id)
+    _check_champion(available, pin["champion"])
+    _check_champion(available, pin["backup"])
+    if pin["champion"] == pin["backup"]:
+        raise RehearsalError(422, "Choose a different champion as the backup.")
 
     if pin.get("node_id"):
         _find_node(plan, pin["node_id"])
@@ -280,15 +334,15 @@ def save_pin(plan: dict, pin: dict) -> None:
 
 
 def save_brief(plan: dict, brief: dict) -> None:
-    _check_champion(plan, brief["backup"])
-    _find_node(plan, brief["node_id"])
+    node = _find_node(plan, brief["node_id"])
+    _check_champion(pool_at(plan, node["game"], node["id"]), brief["backup"])
     plan["brief"] = [old for old in plan["brief"] if old["node_id"] != brief["node_id"]]
     plan["brief"].append(brief)
     plan["selected_node"] = brief["node_id"]
 
 
-def _check_champion(plan: dict, champion: str | None) -> None:
-    if champion is not None and champion not in plan["pool"]:
+def _check_champion(pool: list[str], champion: str | None) -> None:
+    if champion is not None and champion not in pool:
         raise RehearsalError(422, "Choose an enabled champion from the patch pool.")
 
 
@@ -314,20 +368,27 @@ def _pin_reason(pin: dict, status: str, games: list[list[DraftAction]]) -> str:
     return f"A pick by either side before Game {target} will lock {champ}."
 
 
-def evaluated_pins(plan: dict, games: list[list[DraftAction]]) -> list[dict]:
+def evaluated_pins(plan: dict, games: list[list[DraftAction]], node_id: str | None = None) -> list[dict]:
     result = []
     for pin in plan["pins"]:
-        status = pin_status(plan["pool"], games, pin["game"], pin["champion"], pin["team"])
+        available = pool_at(plan, pin["game"], node_id)
+        status = pin_status(available, games, pin["game"], pin["champion"], pin["team"])
+        reason = (_pin_reason(pin, status, games) if pin["champion"] in available
+                  else f"Not eligible in Game {pin['game']} under these tournament restrictions.")
         result.append({
             **{key: pin[key] for key in ("champion", "game", "player", "backup")},
             "status": status,
-            "reason": _pin_reason(pin, status, games),
+            "reason": reason,
         })
     return result
 
 
 def plan_summary(plan: dict) -> dict:
-    return {key: plan[key] for key in ("id", "match_id", "title", "teams", "patch", "source")}
+    node = _find_node(plan, plan["selected_node"])
+    return {
+        **{key: plan[key] for key in ("id", "match_id", "title", "teams", "patch", "source")},
+        **_public_eligibility(plan, node["game"], node["id"]),
+    }
 
 
 def public_plan(plan: dict) -> dict:
@@ -338,7 +399,6 @@ def public_plan(plan: dict) -> dict:
             "rosters", "brief",
         )},
         "event": plan.get("event"),
-        "disabled": plan.get("disabled", []),
         "provenance": plan.get("provenance"),
         "team_history": plan.get("team_history"),
         "coach_team": plan["coach_team"],
@@ -399,10 +459,11 @@ def _forecast_context(plan: dict, pos: Position, prefix: list[DraftAction], fore
     rosters = _model_rosters(plan)
     if plan.get("source") == PROSPECTIVE_ID and (overrides_only or getattr(forecaster, "accepts_event", False)):
         rosters = {ids[name]: rosters[ids[name]] for name in plan.get("roster_overrides", ()) if ids[name] in rosters}
+    recorded = plan.get("replay", {}).get(str(pos.game), {})
     return dict(
-        date=plan["date"], patch=plan["patch"], region=plan["region"],
+        date=recorded.get("date", plan["date"]), patch=recorded.get("patch", plan["patch"]), region=plan["region"],
         first=ids[pos.first], second=ids[pos.second], game_number=pos.game, current=current,
-        locked=sorted(pos.locked), pool=plan["pool"], rosters=rosters,
+        locked=sorted(pos.locked), pool=pool_at(plan, pos.game, pos.node.get("id")), rosters=rosters,
         **({"event": plan.get("event"), "series_id": plan.get("match_id")}
            if getattr(forecaster, "accepts_event", False) else {}),
     )
@@ -455,7 +516,7 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
         if pin is None:
             return None
         games = [*pos.games[:-1], list(prefix)]
-        return pin_status(plan["pool"], games, pin["game"], pin["champion"], pin["team"])
+        return pin_status(pool_at(plan, pin["game"], pos.node.get("id")), games, pin["game"], pin["champion"], pin["team"])
 
     qualities, sources = set(), set()
 
@@ -469,7 +530,7 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
         return result
 
     result = lookahead(
-        pool=plan["pool"], locked=pos.locked, current=pos.current,
+        pool=pool_at(plan, pos.game, pos.node.get("id")), locked=pos.locked, current=pos.current,
         first=pos.first, second=pos.second, coach_team=plan["coach_team"],
         forecast=scored_forecast, evaluate_pin=evaluate if pin else None,
     )
@@ -490,7 +551,8 @@ def _opponent_outlook(plan: dict, pos: Position, forecaster: Any, initial: dict)
 
 def node_state(plan: dict, node_id: str, forecaster: Any = None, frequencies: Any = None) -> dict:
     pos = position_at(plan, node_id)
-    legal = legal_champions(plan["pool"], pos.locked, pos.current) if pos.team else []
+    recorded = plan["replay"].get(str(pos.game), {})
+    legal = legal_champions(pool_at(plan, pos.game, node_id), pos.locked, pos.current) if pos.team else []
     suggestions = []
     source = "Forecast unavailable"
     forecast = None
@@ -535,7 +597,7 @@ def node_state(plan: dict, node_id: str, forecaster: Any = None, frequencies: An
             outlook = _opponent_outlook(plan, pos, forecaster, result)
         elif frequencies is not None:
             observed = frequencies.estimate(
-                as_of=plan["date"], region=plan["region"], kind=pos.kind, legal=legal,
+                as_of=recorded.get("date", plan["date"]), region=plan["region"], kind=pos.kind, legal=legal,
             )
             if observed["choices"]:
                 suggestions = observed["choices"]
@@ -546,9 +608,11 @@ def node_state(plan: dict, node_id: str, forecaster: Any = None, frequencies: An
                 }
 
     return {
+        **_public_eligibility(plan, pos.game, node_id),
+        "patch": recorded.get("patch", plan["patch"]),
         "node_id": node_id, "game": pos.game, "first": pos.first, "second": pos.second,
         "team": pos.team, "kind": pos.kind, "actions": pos.actions, "locked": sorted(pos.locked),
         "legal": legal, "suggestions": suggestions, "source": source, "forecast": forecast, "outlook": outlook,
-        "pins": evaluated_pins(plan, pos.games), "completed": pos.kind == "complete",
+        "pins": evaluated_pins(plan, pos.games, node_id), "completed": pos.kind == "complete",
         "history": history_at(plan, pos),
     }

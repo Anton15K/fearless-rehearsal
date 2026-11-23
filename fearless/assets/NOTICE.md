@@ -4,4 +4,6 @@ The public replay in `public_games.jsonl` is adapted from [LoL-Draft](https://gi
 
 Champion names in `champions.json` come from Riot Games' versioned Data Dragon releases. These are patch release rosters. League officials can impose additional tournament-specific disables. Riot Games owns its game and marks. Fearless Rehearsal is an independent project and is not endorsed by Riot Games.
 
+`eligibility.json` cites the organizer rulebook and patch notes for automatic LEC release-patch exclusions. Mid-season rulings and rework enablement require explicit event evidence or a ruling entered by the coach.
+
 The aggregate counts and fitted parameters in `public_forecast.json` are derived exclusively from the open LCS adaptation above and are distributed under the same [CC BY-SA 4.0 license](https://creativecommons.org/licenses/by-sa/4.0/). They can be regenerated with `python -m fearless.public_model`.

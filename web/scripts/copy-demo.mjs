@@ -22,6 +22,7 @@ const sourceFiles = [
   'fearless/rehearsal.py',
   'fearless/rules.py',
   'fearless/assets/champions.json',
+  'fearless/assets/eligibility.json',
   'fearless/assets/public_games.jsonl',
 ]
 const publicForecast = 'fearless/assets/public_forecast.json'
