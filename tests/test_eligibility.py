@@ -60,6 +60,8 @@ def test_api_restricts_lec_release_patch_and_keeps_manual_disables_separate(tmp_
             assert "Locke" not in response.json()["disabled"]
         automatic = client.post("/api/plans", json={**PROSPECTIVE, "event": "LEC - Summer 2026"}).json()
         assert automatic["ruleset"] == "lec-2026" and automatic["disabled"] == ["Locke"]
+        playoffs = client.post("/api/plans", json={**PROSPECTIVE, "event": "LEC Summer 2026 Playoffs"}).json()
+        assert playoffs["ruleset"] == "lec-2026" and playoffs["disabled"] == ["Locke"]
         unrelated = client.post("/api/plans", json={**PROSPECTIVE, "event": "Example LEC training cup"}).json()
         assert unrelated["ruleset"] == "manual" and unrelated["disabled"] == []
 

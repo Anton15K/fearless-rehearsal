@@ -20,7 +20,11 @@ For a static standalone build, run `npm --prefix web ci` and `npm --prefix web r
 
 ## Rehearse a decision
 
-For an upcoming series, choose **Match prep → New matchup**. Enter both teams, your coaching side, first pick, as-of date, patch and series format. Add a roster override if needed. The board starts at Game 1 with no actions or series locks. Known team and player identities come from games completed before the selected date.
+For an upcoming series, choose **Match prep → New matchup**. Enter both teams, your coaching team, first pick, as-of date, patch, draft format and series length. Choose **First Selection**, **Classic Blue First**, or the organizer’s policy. The board recognizes 2026 LEC and LCS First Selection. For an unrecognized event it leaves the assignments to the organizer. Add a roster override if needed. The board starts at Game 1 with no actions or series locks. Known team and player identities come from games completed before the selected date.
+
+At a game opening, changing first pick refreshes the decision panel for the team now on the clock. **Champion eligibility** shows the effective game pool and the source of known restrictions. For 2026 LEC the board applies the catalogued new-champion release restriction. Enter organizer decisions for reworks, bug disables and events with manual eligibility. Historical games retain sourced restrictions when available. [LEC rulebook and competition policies](https://www.emea-competitiveops.com/)
+
+In **Hard Fearless**, either team's picks leave the pool for the rest of the series. In **Standard**, picks return every game. Bans expire each game in both modes. On a prospective board, record the winner after the twentieth turn. For a continuing 2026 First Selection series, enter which choice the previous game's loser made and each team's resulting side and draft position. The board ends the confirmed series at one, two or three wins in a Bo1, Bo3 or Bo5 respectively. You can open a hypothetical game for prep within the selected series length. In an archived match, **Reveal historical result** advances the score from sourced results.
 
 1. Open the illustrative Cloud9 Kia–LYON board. It starts at Cloud9’s last ban of the first ban phase in Game 2. Blaber has Poppy pinned for Game 3.
 2. Choose the **Poppy** ban. Neither team can pick her in Game 2. The ban expires at the game boundary, so the Game 3 pin is protected.
@@ -49,6 +53,8 @@ A second comparison used 118 previously unused LPL, CBLOL and LCP promotion game
 A simple shortlist of the most frequent legal actions on the patch scored **16.84% on picks**, **30.68% on bans** and **10.62% on exact pairs** in the corresponding comparisons. The pair model’s advantage over pair frequency remains uncertain. [Patch-popularity comparison](docs/transfer-evaluation.md#comparison-with-patch-popularity)
 
 A role-first challenger found **61/303** exact pairs on two previously unused Korean postseason stages. The existing model found **39/303** and patch frequency found **59/303**. The narrow edge over frequency missed the promotion criterion. [Role-first model and results](docs/role-pair-results.md)
+
+A separate retrospective test on an unseen patch covered 90 games and 270 exact two-pick forecasts. With earlier series available, role-first hit 24.8%, the current predictor hit 23.0%, and patch frequency hit 20.0%. The 95% interval for the lead over the current predictor included zero. The candidate remains in shadow. [Unseen-patch results](docs/unseen-patch-results.md)
 
 ## Project map
 

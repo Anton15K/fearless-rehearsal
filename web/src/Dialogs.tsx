@@ -153,11 +153,11 @@ export function briefTemplate(plan: Plan, state: NodeState) {
   const decisions = state.actions.filter(action => action.champion).map(action =>
     `${action.team} ${action.kind === 'ban' ? 'bans' : 'picks'} ${action.champion}`,
   )
-  const lines = [`${plan.title} · Game ${state.game} · Patch ${plan.patch}`]
+  const lines = [`${plan.title} · Game ${state.game} · Patch ${state.patch ?? plan.patch}`]
   if (plan.priority) lines.push(`Priority: ${plan.priority}`)
   if (current) lines.push(`Position: ${nodeLabel(current)}`)
   if (decisions.length) lines.push(`Draft: ${decisions.join(', ')}.`)
-  lines.push(`${state.locked.length} champions locked by Fearless Draft.`)
+  lines.push(state.draft_mode === 'standard' ? 'Standard tournament draft.' : `${state.locked.length} champions locked by Fearless Draft.`)
   for (const pin of state.pins) {
     lines.push(`Game ${pin.game} · ${pin.player}: ${pin.champion} (${pin.status.replaceAll('_', ' ')}).${pin.backup ? ` Backup: ${pin.backup}.` : ''}`)
   }
@@ -203,7 +203,7 @@ export function CoachBrief({ plan, state, save, busy }: {
           <div><dt>Selected node</dt><dd>{node ? nodeLabel(node) : `Game ${state.game}`}</dd></div>
           <div><dt>First pick</dt><dd>{state.first}</dd></div>
           <div><dt>Series priority</dt><dd>{plan.priority || 'No priority set'}</dd></div>
-          <div><dt>Fearless lockout</dt><dd>{state.locked.length} champions</dd></div>
+          {state.draft_mode === 'standard' ? <div><dt>Draft format</dt><dd>Standard</dd></div> : <div><dt>Fearless lockout</dt><dd>{state.locked.length} champions</dd></div>}
           <div><dt>Future-game pins</dt><dd>{state.pins.length}</dd></div>
         </dl>
       </section>

@@ -19,9 +19,6 @@ HISTORICAL_SERIES = {"3000378": "Bo5", "994442840205359781": "Bo3"}
 DEMO_PATCH = "16.17"
 DEMO_TEAMS = ("Cloud9 Kia", "LYON")
 RULESETS = json.loads(Path(__file__).with_name("assets").joinpath("eligibility.json").read_text(encoding="utf8"))
-LEC_2026_EVENT = re.compile(
-    r"lec(?: (?:lec )?(?:(?:spring|summer|winter|versus|kickoff)(?: 2026)?|2026(?: (?:spring|summer|winter|versus|kickoff))?))?"
-)
 SELECTION_POLICIES = {
     "organizer": {"label": "Organizer-defined", "source": None},
     "first_selection": {
@@ -30,11 +27,13 @@ SELECTION_POLICIES = {
     },
     "blue_first": {"label": "Classic blue side picks first", "source": None},
 }
-FIRST_SELECTION_2026_EVENT = re.compile(
-    r"(?:lec(?: 2026)?(?: (?:lec )?(?:versus|spring|summer)(?: split)?(?: 2026)?"
-    r"(?: (?:regular season|playoffs))?)?"
-    r"|lcs(?: 2026)?(?: (?:lock in|spring|summer|split [12]|championship)"
-    r"(?: split)?(?: 2026)?(?: (?:regular season|playoffs))?)?)"
+LEC_2026_EVENT = re.compile(
+    r"lec(?: 2026)?(?: (?:lec )?(?:versus|spring|summer|winter|kickoff)(?: split)?"
+    r"(?: 2026)?(?: (?:regular season|playoffs))?)?"
+)
+LCS_2026_EVENT = re.compile(
+    r"lcs(?: 2026)?(?: (?:lock in|spring|summer|split [12]|championship)"
+    r"(?: split)?(?: 2026)?(?: (?:regular season|playoffs))?)?"
 )
 DEMO_POOL = tuple(sorted({
     "Aatrox", "Ahri", "Akali", "Akshan", "Alistar", "Ambessa", "Amumu", "Anivia", "Annie",
@@ -147,7 +146,7 @@ def selection_policy_for(event: str | None, as_of: str, requested: str | None) -
             raise RehearsalError(422, "Choose a supported opening selection policy.")
         return requested
     words = " ".join(re.findall(r"[a-z0-9]+", (event or "").casefold()))
-    if as_of.startswith("2026-") and FIRST_SELECTION_2026_EVENT.fullmatch(words):
+    if as_of.startswith("2026-") and (LEC_2026_EVENT.fullmatch(words) or LCS_2026_EVENT.fullmatch(words)):
         return "first_selection"
     return "organizer"
 
