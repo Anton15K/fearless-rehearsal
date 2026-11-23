@@ -37,10 +37,13 @@ class HistoricalFrequencies:
             for players in game.get("rosters", {}).values() for player in players
             if player.get("champion") and player.get("role") and player.get("role_source")
         }
-        self._games[key] = (day, game.get("region", ""), actions, roles)
+        self._games[key] = (day, game.get("region", ""), actions, roles, game.get("fearless", True))
 
-    def estimate(self, *, as_of: str, region: str, kind: str, legal: list[str]) -> dict:
-        known = [game for game in self._games.values() if game[0] < as_of]
+    def estimate(self, *, as_of: str, region: str, kind: str, legal: list[str], fearless: bool | None = None) -> dict:
+        known = [
+            game for game in self._games.values()
+            if game[0] < as_of and (fearless is None or game[4] is fearless)
+        ]
         regional = [game for game in known if region and game[1] == region]
         games = regional or known
         if not games:
@@ -48,7 +51,7 @@ class HistoricalFrequencies:
 
         counts = Counter()
         roles = Counter()
-        for _, _, actions, labels in games:
+        for _, _, actions, labels, _ in games:
             counts.update(champion for action, champion in actions if action == kind)
             roles.update(labels)
 

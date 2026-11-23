@@ -77,7 +77,7 @@ def _demo() -> Match:
         metadata={
             "id": DEMO_ID, "title": f"{cloud9} vs {lyon}", "teams": list(DEMO_TEAMS),
             "source": "illustrative", "date": "2026-10-03", "patch": DEMO_PATCH,
-            "format": "Bo5", "rosters": rosters, "first": lyon,
+            "format": "Bo5", "draft_mode": "fearless", "rosters": rosters, "first": lyon,
         },
         region="NA",
         team_ids={team: team for team in DEMO_TEAMS},
@@ -99,7 +99,7 @@ def _series_matches(games: list[dict], catalog: dict[str, tuple[str, ...]]) -> l
         series = str(row.get("series_id", ""))
         if (
             series in HISTORICAL_SERIES and row.get("eligible", True)
-            and row.get("finished", True) and row.get("fearless", True)
+            and row.get("finished", True)
         ):
             grouped[series].append(row)
 
@@ -177,9 +177,21 @@ def _recorded_sides(sides, team_names):
 
 def _series_match(series_id: str, rows: list[dict], catalog: dict[str, tuple[str, ...]]) -> Match | None:
     rows.sort(key=lambda row: row["game_number"])
-    if len(rows) < 2 or [row["game_number"] for row in rows] != list(range(1, len(rows) + 1)):
+    if not rows or [row["game_number"] for row in rows] != list(range(1, len(rows) + 1)):
         return None
-    earlier, opening = rows[:2]
+    earlier = rows[0]
+    game_format = earlier.get("format") or (
+        f"Bo{earlier['best_of']}" if earlier.get("best_of") else HISTORICAL_SERIES[series_id]
+    )
+    if game_format not in {"Bo1", "Bo3", "Bo5"}:
+        return None
+    opening_game = 1 if game_format == "Bo1" else 2
+    if not opening_game <= len(rows) <= int(game_format[-1]):
+        return None
+    opening = rows[opening_game - 1]
+    fearless = earlier.get("fearless", True)
+    if type(fearless) is not bool or any(row.get("fearless", True) is not fearless for row in rows):
+        return None
     team_ids = {earlier["team_names"][team]: team for team in (earlier["first"], earlier["second"])}
     if len(team_ids) != 2:
         return None
@@ -194,7 +206,7 @@ def _series_match(series_id: str, rows: list[dict], catalog: dict[str, tuple[str
         selected = eligibility(catalog.get(patch, DEMO_POOL), patch, ruleset,
                                recorded=row.get("disabled"), source=row.get("disabled_source") or row.get("source"),
                                historical=True)
-        locked = series_locks(completed)
+        locked = series_locks(completed, fearless=fearless)
         actions = []
         for action in row["actions"]:
             team, kind, champion = team_names[action["team"]], action["kind"], action["champion"]
@@ -211,36 +223,34 @@ def _series_match(series_id: str, rows: list[dict], catalog: dict[str, tuple[str
         }
         completed.append(actions)
 
-    # Game 1 is already complete. Its lineups are available at this starting position.
+    # Only a completed prior game's lineup is available as forecast evidence.
     players = {}
-    for team, roster in earlier.get("rosters", {}).items():
+    prior = [replay.pop(1)] if opening_game == 2 else []
+    lineups = earlier.get("rosters", {}) if prior else {}
+    for team, roster in lineups.items():
         if team in team_names:
             players[team_names[team]] = {
                 player["player_name"].strip(): str(player["player"])
                 for player in roster if player.get("player_name") and player.get("player")
             }
-    game_format = earlier.get("format") or (
-        f"Bo{earlier['best_of']}" if earlier.get("best_of") else HISTORICAL_SERIES[series_id]
-    )
-    if game_format not in {"Bo3", "Bo5"} or len(completed) > int(game_format[-1]):
-        return None
     coach = next((name for name in team_ids if "cloud9" in name.lower()), next(iter(team_ids)))
     teams = [coach, next(name for name in team_ids if name != coach)]
     return Match(
         metadata={
             "id": series_id, "title": " vs ".join(teams), "teams": teams,
             "source": "historical", "date": date.fromisoformat(opening["date"]).isoformat(),
-            "patch": opening["patch"], "format": game_format, "first": replay[2]["first"],
+            "patch": opening["patch"], "format": game_format, "first": replay[opening_game]["first"],
+            "draft_mode": "fearless" if fearless else "standard",
             "rosters": {team: list(roster) for team, roster in players.items()},
             "provenance": opening.get("source"), "event": opening.get("event"),
-            "blue": replay[2]["blue"], "sides": replay[2]["sides"],
-            "prior_winners": [replay[1]["winner"]], "prior_sides": [replay[1]["sides"]],
-            "ruleset": replay[2]["eligibility"]["ruleset"],
+            "blue": replay[opening_game]["blue"], "sides": replay[opening_game]["sides"],
+            "prior_winners": [game["winner"] for game in prior], "prior_sides": [game["sides"] for game in prior],
+            "ruleset": replay[opening_game]["eligibility"]["ruleset"],
         },
         region=opening.get("region", ""),
         team_ids=team_ids,
         player_ids=players,
-        previous=[replay.pop(1)["actions"]],
+        previous=[game["actions"] for game in prior],
         historical=replay,
         opening=[],
         coach_team=coach,

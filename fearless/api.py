@@ -24,8 +24,10 @@ from fearless.rehearsal import (
     node_state,
     plan_summary,
     public_plan,
+    record_result,
     save_brief,
     save_pin,
+    select_opening,
 )
 
 
@@ -52,12 +54,14 @@ class PlanInput(Payload):
     teams: Annotated[list[Name], Field(min_length=2, max_length=2)] | None = None
     coach_team: Name | None = None
     date: Annotated[str, StringConstraints(pattern=r"^\d{4}-\d{2}-\d{2}$")] | None = None
-    format: Literal["Bo3", "Bo5"] | None = None
+    format: Literal["Bo1", "Bo3", "Bo5"] | None = None
+    draft_mode: Literal["fearless", "standard"] | None = None
     title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)] | None = None
     priority: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)] | None = None
     target_game: Game | None = None
     player: Name | None = None
     first: Name | None = None
+    blue: Name | None = None
     patch: Patch | None = None
     rosters: Annotated[dict[Name, Roster], Field(max_length=2)] | None = None
 
@@ -69,6 +73,18 @@ class ParentInput(Payload):
 class ActionInput(ParentInput):
     champion: Name | None
     first: Name | None = None
+
+
+class SelectionInput(ParentInput):
+    first: Name
+    blue: Name | None = None
+    choice: Literal["first_pick", "map_side"] | None = None
+    hypothetical: Annotated[bool, Field(strict=True)] = False
+    disabled: Annotated[list[Name], Field(max_length=30)] | None = None
+
+
+class ResultInput(ParentInput):
+    winner: Name
 
 
 class PinInput(Payload):
@@ -228,6 +244,18 @@ def create_app(
             owner, plan_id, lambda current: apply_action(current, payload.parent_id, payload.champion, payload.first),
         )
         return public_plan(plan)
+
+    @app.post("/api/plans/{plan_id}/selection")
+    def change_opening(plan_id: Identifier, payload: SelectionInput, owner: Owner):
+        return public_plan(store.edit(
+            owner, plan_id, lambda current: select_opening(current, **payload.model_dump()),
+        ))
+
+    @app.post("/api/plans/{plan_id}/result")
+    def set_result(plan_id: Identifier, payload: ResultInput, owner: Owner):
+        return public_plan(store.edit(
+            owner, plan_id, lambda current: record_result(current, payload.parent_id, payload.winner),
+        ))
 
     @app.post("/api/plans/{plan_id}/advance-history")
     def replay_action(plan_id: Identifier, payload: ParentInput, owner: Owner):

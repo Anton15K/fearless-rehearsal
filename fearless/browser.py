@@ -12,8 +12,10 @@ from fearless.rehearsal import (
     node_state,
     plan_summary,
     public_plan,
+    record_result,
     save_brief,
     save_pin,
+    select_opening,
 )
 
 
@@ -59,6 +61,13 @@ class BrowserRehearsal:
         match endpoint:
             case ["actions"]:
                 apply_action(plan, data["parent_id"], data["champion"], data.get("first"))
+            case ["selection"]:
+                select_opening(
+                    plan, data["parent_id"], data["first"], data.get("blue"), choice=data.get("choice"),
+                    hypothetical=data.get("hypothetical", False), disabled=data.get("disabled"),
+                )
+            case ["result"]:
+                record_result(plan, data["parent_id"], data["winner"])
             case ["advance-history"]:
                 advance_history(plan, data["parent_id"])
             case ["pins"]:
